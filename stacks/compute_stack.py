@@ -49,6 +49,12 @@ from aws_cdk import (
     aws_sns_subscriptions as sns_subscriptions,
 )
 from aws_cdk import (
+    aws_emrserverless as emrs,
+)
+from aws_cdk import (
+    aws_s3_deployment as s3deploy,
+)
+from aws_cdk import (
     aws_stepfunctions as sfn,
 )
 from aws_cdk import (
@@ -494,6 +500,129 @@ class ComputeStack(Stack):
             error="EmrNotEnabled",
         )
 
+        # -----------------------------------------------------------------
+        # EMR Serverless (optional — enabled when enable_emr context var = true)
+        # -----------------------------------------------------------------
+        if enable_emr:
+            emr_app = emrs.CfnApplication(
+                self,
+                "EmrSparkApp",
+                type="SPARK",
+                release_label="emr-7.1.0",
+                name=f"{prefix}-spark",
+                maximum_capacity=emrs.CfnApplication.MaximumAllowedResourcesProperty(
+                    cpu="16 vCPU",
+                    memory="64 GB",
+                ),
+                auto_stop_configuration=emrs.CfnApplication.AutoStopConfigurationProperty(
+                    enabled=True,
+                    idle_timeout_minutes=15,
+                ),
+            )
+
+            emr_job_role = iam.Role(
+                self,
+                "EmrJobRole",
+                role_name=f"{prefix}-emr-job-role",
+                assumed_by=iam.ServicePrincipal("emr-serverless.amazonaws.com"),
+            )
+            emr_job_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["s3:GetObject", "s3:ListBucket"],
+                    resources=[
+                        compute_bucket.bucket_arn,
+                        f"{compute_bucket.bucket_arn}/inputs/*",
+                        f"{compute_bucket.bucket_arn}/spark/*",
+                    ],
+                )
+            )
+            emr_job_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["s3:PutObject", "s3:GetObject"],
+                    resources=[f"{compute_bucket.bucket_arn}/results/*"],
+                )
+            )
+
+            # Upload Spark job script to compute bucket at deploy time
+            s3deploy.BucketDeployment(
+                self,
+                "SparkScriptDeploy",
+                sources=[s3deploy.Source.asset("spark")],
+                destination_bucket=compute_bucket,
+                destination_key_prefix="spark",
+            )
+
+            # Grant Step Functions permission to start EMR Serverless jobs
+            emr_start_role = iam.Role(
+                self,
+                "EmrStartRole",
+                assumed_by=iam.ServicePrincipal(
+                    "states.amazonaws.com",
+                    conditions={"StringEquals": {"aws:SourceAccount": self.account}},
+                ),
+            )
+            emr_start_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["emr-serverless:StartJobRun", "emr-serverless:GetJobRun"],
+                    resources=[f"arn:aws:emr-serverless:{self.region}:{self.account}:/applications/{emr_app.ref}/*"],
+                )
+            )
+            emr_start_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["iam:PassRole"],
+                    resources=[emr_job_role.role_arn],
+                )
+            )
+
+            emr_spark_task = tasks.EmrServerlessStartJobRun(
+                self,
+                "ComputeEmrTask",
+                application_id=emr_app.ref,
+                execution_role_arn=emr_job_role.role_arn,
+                job_driver=tasks.JobDriver(
+                    spark_submit=tasks.SparkSubmit(
+                        entry_point=f"s3://{compute_bucket.bucket_name}/spark/transform.py",
+                        entry_point_arguments=[
+                            "--execution-id", sfn.JsonPath.string_at("$.execution_id"),
+                            "--input-s3", sfn.JsonPath.string_at("$.extract.input_s3_uri"),
+                            "--output-s3", sfn.JsonPath.format(
+                                "s3://{}/results/{}",
+                                compute_bucket.bucket_name,
+                                sfn.JsonPath.string_at("$.execution_id"),
+                            ),
+                            "--join-keys", sfn.JsonPath.json_to_string(
+                                sfn.JsonPath.list_at("$.parameters.join_keys")
+                            ),
+                            "--join-type", sfn.JsonPath.string_at("$.parameters.join_type"),
+                            "--select-cols", sfn.JsonPath.json_to_string(
+                                sfn.JsonPath.list_at("$.parameters.select_cols")
+                            ),
+                            "--filter-expr", sfn.JsonPath.string_at("$.parameters.filter_expr"),
+                            "--additional-s3", sfn.JsonPath.json_to_string(
+                                sfn.JsonPath.list_at("$.parameters.additional_s3")
+                            ),
+                        ],
+                        spark_submit_parameters=(
+                            "--conf spark.executor.cores=2 "
+                            "--conf spark.executor.memory=4g "
+                            "--conf spark.driver.memory=2g"
+                        ),
+                    )
+                ),
+                result_path="$.compute",
+                timeout=Duration.hours(2),
+            )
+            emr_spark_task.add_catch(
+                handler=handle_failure_task,
+                errors=["States.ALL"],
+                result_path="$.error_info",
+            )
+            emr_spark_task.next(deliver_task)
+
+            emr_route_target = emr_spark_task
+        else:
+            emr_route_target = emr_not_enabled
+
         route_compute = sfn.Choice(self, "RouteCompute")
         route_compute.when(
             sfn.Condition.string_equals("$.profile.backend", "lambda"),
@@ -504,9 +633,7 @@ class ComputeStack(Stack):
                 sfn.Condition.string_equals("$.profile.backend", "emr_serverless"),
                 sfn.Condition.boolean_equals("$.enable_emr", True),
             ),
-            # Placeholder: real EMR Serverless task would go here
-            # For initial build, route to handle-failure with requires_emr status
-            handle_failure_task,
+            emr_route_target,
         )
         route_compute.otherwise(emr_not_enabled)
 

@@ -51,7 +51,8 @@ qs = boto3.client("quicksight")
 
 def handler(event: dict, context) -> dict:
     execution_id = event["execution_id"]
-    dataset_id = event["dataset_id"]
+    dataset_id = event.get("dataset_id", "")
+    source_uri = event.get("source_uri", "")
     compute_bucket = os.environ["COMPUTE_BUCKET"]
     account_id = os.environ["QUICKSIGHT_ACCOUNT_ID"]
 
@@ -59,7 +60,25 @@ def handler(event: dict, context) -> dict:
         "step": "extract",
         "execution_id": execution_id,
         "dataset_id": dataset_id,
+        "source_uri": source_uri,
     }))
+
+    # ------------------------------------------------------------------
+    # clAWS URI — not yet implemented
+    # ------------------------------------------------------------------
+    if source_uri.startswith("claws://"):
+        return {
+            "status": "unsupported_source",
+            "error": "clAWS URI support coming in v0.4.0",
+            "source_uri": source_uri,
+            "execution_id": execution_id,
+        }
+
+    # ------------------------------------------------------------------
+    # Direct S3 URI — bypass Quick Sight dataset lookup
+    # ------------------------------------------------------------------
+    if source_uri.startswith("s3://"):
+        return _extract_from_s3_uri(source_uri, execution_id, compute_bucket)
 
     # ------------------------------------------------------------------
     # 1. Describe the Quick Sight dataset to find the S3 source
@@ -268,6 +287,139 @@ def handler(event: dict, context) -> dict:
         "input_s3_uri": input_s3_uri,
         "row_count": row_count,
         "columns": header,
+    }))
+
+    return {
+        "execution_id": execution_id,
+        "input_s3_uri": input_s3_uri,
+        "row_count": row_count,
+        "columns": header,
+    }
+
+
+def _extract_from_s3_uri(source_uri: str, execution_id: str, compute_bucket: str) -> dict:
+    """
+    Download a file directly from an s3:// URI and store it in the compute
+    bucket inputs prefix as CSV (for runner consumption).
+
+    Supports CSV, TSV, JSON (newline-delimited), and Parquet.
+    Parquet support requires pyarrow (not guaranteed in extract Lambda);
+    falls back to raw copy with .parquet extension if unavailable.
+    """
+    parsed = urllib.parse.urlparse(source_uri)
+    src_bucket = parsed.netloc
+    src_key = parsed.path.lstrip("/")
+
+    if not src_bucket or not src_key:
+        return {
+            "status": "unsupported_source",
+            "error": f"Could not parse bucket/key from source_uri: {source_uri}",
+            "execution_id": execution_id,
+        }
+
+    try:
+        obj = s3.get_object(Bucket=src_bucket, Key=src_key)
+        body = obj["Body"].read()
+    except botocore.exceptions.ClientError as e:
+        return {
+            "status": "unsupported_source",
+            "error": f"Failed to read {source_uri}: {e}",
+            "execution_id": execution_id,
+        }
+
+    ext = src_key.lower().split(".")[-1] if "." in src_key else ""
+
+    # Attempt Parquet → CSV conversion
+    if ext in ("parquet", "parq"):
+        try:
+            import pyarrow.parquet as pq  # noqa: PLC0415
+            import pyarrow as pa           # noqa: PLC0415
+            table = pq.read_table(io.BytesIO(body))
+            header = table.schema.names
+            all_rows = [
+                [str(col[i].as_py()) for col in table.columns]
+                for i in range(table.num_rows)
+            ]
+        except ImportError:
+            # pyarrow not available — store raw Parquet, runner reads it directly
+            input_key = f"inputs/{execution_id}/data.parquet"
+            s3.put_object(Bucket=compute_bucket, Key=input_key,
+                          Body=body, ContentType="application/octet-stream")
+            input_s3_uri = f"s3://{compute_bucket}/{input_key}"
+            logger.info(json.dumps({
+                "step": "extract_complete",
+                "execution_id": execution_id,
+                "input_s3_uri": input_s3_uri,
+                "source": "s3_direct",
+                "format": "parquet",
+            }))
+            return {
+                "execution_id": execution_id,
+                "input_s3_uri": input_s3_uri,
+                "row_count": -1,
+                "columns": [],
+            }
+        except Exception as e:
+            return {
+                "status": "unsupported_source",
+                "error": f"Failed to parse Parquet: {e}",
+                "execution_id": execution_id,
+            }
+    elif ext in ("json", "jsonl", "ndjson"):
+        header = None
+        all_rows = []
+        for line in body.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if header is None:
+                header = list(record.keys())
+            all_rows.append([str(record.get(col, "")) for col in header])
+        if header is None:
+            return {
+                "status": "unsupported_source",
+                "error": "JSON source file contained no valid records",
+                "execution_id": execution_id,
+            }
+    else:
+        # CSV / TSV
+        delimiter = "\t" if ext in ("tsv", "tab") else ","
+        text = body.decode("utf-8", errors="replace")
+        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+        rows = list(reader)
+        if not rows:
+            return {
+                "status": "unsupported_source",
+                "error": "Source file is empty",
+                "execution_id": execution_id,
+            }
+        header = rows[0]
+        all_rows = rows[1:]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(header)
+    writer.writerows(all_rows)
+    csv_bytes = output.getvalue().encode("utf-8")
+
+    input_key = f"inputs/{execution_id}/data.csv"
+    s3.put_object(Bucket=compute_bucket, Key=input_key,
+                  Body=csv_bytes, ContentType="text/csv")
+
+    input_s3_uri = f"s3://{compute_bucket}/{input_key}"
+    row_count = len(all_rows)
+
+    logger.info(json.dumps({
+        "step": "extract_complete",
+        "execution_id": execution_id,
+        "input_s3_uri": input_s3_uri,
+        "row_count": row_count,
+        "columns": header,
+        "source": "s3_direct",
     }))
 
     return {

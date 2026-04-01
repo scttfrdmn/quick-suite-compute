@@ -5,24 +5,25 @@ Validates job parameters against the selected profile, checks the user's
 remaining monthly compute budget, and starts a Step Functions execution.
 Returns a job_id immediately.
 
-Event args:
+Single-profile event args:
   profile_id   (str, required)  Profile to run
-  dataset_id   (str, required)  Quick Sight dataset ID as input
+  dataset_id   (str, required)  Quick Sight dataset ID as input (or use source_uri)
   user_arn     (str, required)  Caller ARN for budget tracking
   parameters   (dict)           Profile-specific parameters
   dataset_name (str)            Optional result dataset name
+  source_uri   (str)            Optional direct S3 URI (s3://bucket/key) or claws:// URI
 
-Returns:
-  {
-    "status": "started",
-    "job_id": str,
-    "execution_arn": str,
-    "profile_id": str,
-    "profile_display_name": str,
-    "estimated_cost_usd": float,
-    "message": str
-  }
-  OR {"error": str}
+Parallel-profile event args (supply profiles list instead of profile_id):
+  profiles     (list[str])      List of profile_id values to run in parallel
+  dataset_id   (str, required)  Quick Sight dataset ID as input (or use source_uri)
+  user_arn     (str, required)  Caller ARN for budget tracking
+  parameters   (dict)           Shared profile parameters
+
+Returns (single):
+  {"status": "started", "job_id": str, "execution_arn": str, ...}
+Returns (parallel):
+  {"status": "started", "count": int, "jobs": [{"job_id": str, "profile_id": str}, ...]}
+OR {"error": str}
 """
 
 import json
@@ -123,20 +124,37 @@ def handler(event: dict, context) -> dict:
         pass
     logger.info(json.dumps({"tool": _tool_name, "event": event}))
 
-    profile_id = (event.get("profile_id") or "").strip()
-    dataset_id = (event.get("dataset_id") or "").strip()
     user_arn = (event.get("user_arn") or "").strip()
-
-    if not profile_id:
-        return {"error": 'Required parameter "profile_id" is missing'}
-    if not dataset_id:
-        return {"error": 'Required parameter "dataset_id" is missing'}
     if not user_arn:
         return {"error": 'Required parameter "user_arn" is missing'}
     if not _ARN_RE.match(user_arn):
         return {"error": "user_arn must be a valid IAM ARN "
                          "(arn:aws:iam::ACCOUNT:(user|role|assumed-role)/NAME)"}
 
+    # Validate source_uri if provided
+    source_uri = (event.get("source_uri") or "").strip()
+    if source_uri and not (source_uri.startswith("s3://") or source_uri.startswith("claws://")):
+        return {"error": "source_uri must start with 's3://' or 'claws://'"}
+
+    dataset_id = (event.get("dataset_id") or "").strip()
+    if not dataset_id and not source_uri:
+        return {"error": 'Either "dataset_id" or "source_uri" is required'}
+
+    # Check for parallel-profile invocation
+    profiles_list = event.get("profiles")
+    if profiles_list:
+        return _run_parallel(event, user_arn, dataset_id, source_uri)
+
+    # Single-profile path
+    profile_id = (event.get("profile_id") or "").strip()
+    if not profile_id:
+        return {"error": 'Required parameter "profile_id" is missing'}
+
+    return _run_single(event, profile_id, user_arn, dataset_id, source_uri)
+
+
+def _run_single(event: dict, profile_id: str, user_arn: str,
+                dataset_id: str, source_uri: str) -> dict:
     profiles = _load_profiles()
     profile = profiles.get(profile_id)
     if not profile:
@@ -192,50 +210,12 @@ def handler(event: dict, context) -> dict:
             "validation_errors": errors,
         }
 
-    # Merge defaults into params
-    merged_params = {}
-    for param_name, spec in profile.get("parameters", {}).items():
-        merged_params[param_name] = user_params.get(param_name, spec.get("default"))
-
-    # Build execution input
-    execution_id = str(uuid.uuid4())
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    dataset_name = (
-        event.get("dataset_name")
-        or f"{profile['display_name']} — {timestamp}"
+    job_id, execution_arn, err = _start_execution(
+        profile, user_arn, dataset_id, source_uri,
+        event.get("dataset_name"), event.get("parameters") or {},
     )
-    if len(dataset_name) > 128:
-        logger.warning(json.dumps({"dataset_name_truncated": True,
-                                   "original_length": len(dataset_name)}))
-        dataset_name = dataset_name[:128]
-
-    execution_input = {
-        "execution_id": execution_id,
-        "profile": profile,
-        "dataset_id": dataset_id,
-        "dataset_name": dataset_name,
-        "user_arn": user_arn,
-        "parameters": merged_params,
-        "enable_emr": enable_emr,
-        "started_at": timestamp,
-    }
-
-    state_machine_arn = os.environ["STATE_MACHINE_ARN"]
-    execution_name = f"job-{execution_id[:8]}-{timestamp[:10].replace('-', '')}"
-
-    try:
-        response = sfn.start_execution(
-            stateMachineArn=state_machine_arn,
-            name=execution_name,
-            input=json.dumps(execution_input),
-        )
-    except Exception as exc:
-        logger.error(f"Failed to start execution: {exc}")
-        return {"error": f"Failed to start compute job: {exc}"}
-
-    execution_arn = response["executionArn"]
-    # Short job ID is the execution name
-    job_id = execution_name
+    if err:
+        return {"error": err}
 
     logger.info(json.dumps({
         "started": True,
@@ -250,10 +230,94 @@ def handler(event: dict, context) -> dict:
         "execution_arn": execution_arn,
         "profile_id": profile_id,
         "profile_display_name": profile["display_name"],
-        "dataset_name": dataset_name,
         "estimated_cost_usd": profile.get("cost_estimate", {}).get("typical_cost_usd", 0),
         "message": (
             f"Started {profile['display_name']} job. "
             f"Call compute_status with job_id='{job_id}' to check progress."
         ),
     }
+
+
+def _run_parallel(event: dict, user_arn: str, dataset_id: str, source_uri: str) -> dict:
+    """Start one Step Functions execution per profile and return all job IDs."""
+    profiles_list = event.get("profiles", [])
+    if not isinstance(profiles_list, list) or not profiles_list:
+        return {"error": '"profiles" must be a non-empty list of profile_id strings'}
+    if len(profiles_list) > 10:
+        return {"error": '"profiles" list must not exceed 10 items'}
+
+    profiles = _load_profiles()
+    unknown = [p for p in profiles_list if p not in profiles]
+    if unknown:
+        return {
+            "error": f"Unknown profile(s): {unknown}",
+            "available_profiles": sorted(profiles.keys()),
+        }
+
+    enable_emr = os.environ.get("ENABLE_EMR", "false").lower() == "true"
+    jobs = []
+    errors = []
+    for pid in profiles_list:
+        profile = profiles[pid]
+        if profile.get("backend") == "emr_serverless" and not enable_emr:
+            errors.append(f"Profile '{pid}' requires EMR Serverless (not enabled)")
+            continue
+        job_id, execution_arn, err = _start_execution(
+            profile, user_arn, dataset_id, source_uri,
+            event.get("dataset_name"), event.get("parameters") or {},
+        )
+        if err:
+            errors.append(f"Profile '{pid}': {err}")
+        else:
+            jobs.append({"job_id": job_id, "execution_arn": execution_arn, "profile_id": pid})
+
+    result = {
+        "status": "started" if jobs else "failed",
+        "count": len(jobs),
+        "jobs": jobs,
+    }
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+def _start_execution(profile: dict, user_arn: str, dataset_id: str,
+                     source_uri: str, dataset_name, user_params: dict) -> tuple:
+    """Start a single Step Functions execution. Returns (job_id, execution_arn, error_str)."""
+    execution_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Merge parameter defaults
+    merged_params = {}
+    for param_name, spec in profile.get("parameters", {}).items():
+        merged_params[param_name] = user_params.get(param_name, spec.get("default"))
+
+    name = dataset_name or f"{profile['display_name']} — {timestamp}"
+    if len(name) > 128:
+        name = name[:128]
+
+    execution_input = {
+        "execution_id": execution_id,
+        "profile": profile,
+        "dataset_id": dataset_id,
+        "source_uri": source_uri,
+        "dataset_name": name,
+        "user_arn": user_arn,
+        "parameters": merged_params,
+        "enable_emr": os.environ.get("ENABLE_EMR", "false").lower() == "true",
+        "started_at": timestamp,
+    }
+
+    state_machine_arn = os.environ["STATE_MACHINE_ARN"]
+    execution_name = f"job-{execution_id[:8]}-{timestamp[:10].replace('-', '')}"
+
+    try:
+        response = sfn.start_execution(
+            stateMachineArn=state_machine_arn,
+            name=execution_name,
+            input=json.dumps(execution_input),
+        )
+        return execution_name, response["executionArn"], None
+    except Exception as exc:
+        logger.error(f"Failed to start execution for {profile['profile_id']}: {exc}")
+        return None, None, f"Failed to start compute job: {exc}"
