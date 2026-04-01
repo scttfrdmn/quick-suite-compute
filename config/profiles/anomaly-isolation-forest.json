@@ -1,0 +1,30 @@
+{
+  "profile_id": "anomaly-isolation-forest",
+  "display_name": "Anomaly Detection (Isolation Forest)",
+  "description": "Flags statistically anomalous records using scikit-learn IsolationForest. Adds is_anomaly (boolean) and anomaly_score (float) columns. Useful for detecting unusual financial transactions or anomalous grade distributions.",
+  "category": "anomaly-detection",
+  "backend": "lambda",
+  "entrypoint": "anomaly.isolation_forest_handler",
+  "parameters": {
+    "features": {"type": "column_list", "min_columns": 1, "description": "Feature columns for anomaly detection"},
+    "contamination": {"type": "float", "default": 0.05, "min": 0.01, "max": 0.20, "description": "Expected proportion of anomalies (0.01–0.20)"},
+    "return_scores": {"type": "boolean", "default": true, "description": "Include raw anomaly scores in output"}
+  },
+  "input_requirements": {
+    "min_rows": 100,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "is_anomaly", "type": "boolean"},
+      {"name": "anomaly_score", "type": "float"}
+    ]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 20,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["anomaly", "outlier", "fraud", "financial", "quality-control", "audit"]
+}

@@ -1,0 +1,83 @@
+# AgentCore Gateway tool definitions for Quick Suite Compute
+# Register each Lambda as a target in AgentCore Gateway.
+
+tools:
+  - name: compute_profiles
+    description: >
+      List available analysis profiles — clustering, regression, forecasting,
+      retention, text topic modeling, anomaly detection, geographic enrichment,
+      correlation analysis, and survival analysis. Returns profile IDs,
+      descriptions, required parameters, and estimated costs. Call this first
+      to discover what analyses are available before calling compute_run.
+    parameters:
+      type: object
+      properties:
+        category:
+          type: string
+          description: >
+            Optional filter by category: segmentation, prediction, forecasting,
+            retention, text-analysis, anomaly-detection, transform, exploration,
+            enrichment, survival. Omit to list all.
+        tags:
+          type: array
+          items:
+            type: string
+          description: >
+            Optional filter by tags (e.g., ["enrollment", "clustering"]).
+            Returns profiles that match any tag.
+      required: []
+
+  - name: compute_run
+    description: >
+      Start an analytics job. Validates parameters against the selected profile,
+      checks the user's monthly compute budget, and starts an asynchronous
+      Step Functions execution. Returns a job_id immediately — use compute_status
+      to poll for results. Most Lambda-backed jobs complete in 15–120 seconds.
+    parameters:
+      type: object
+      properties:
+        profile_id:
+          type: string
+          description: >
+            Profile to run (from compute_profiles). Examples: clustering-kmeans,
+            regression-glm, forecast-prophet.
+        dataset_id:
+          type: string
+          description: Quick Sight dataset ID to analyze.
+        user_arn:
+          type: string
+          description: >
+            ARN of the user requesting the analysis. Used for budget tracking.
+            Typically the caller's IAM identity ARN.
+        parameters:
+          type: object
+          description: >
+            Profile-specific parameters. See compute_profiles for the parameter
+            schema of each profile. Unknown keys are ignored; missing required
+            keys cause a validation error.
+        dataset_name:
+          type: string
+          description: >
+            Optional name for the result Quick Sight dataset.
+            Defaults to "{profile_display_name} — {timestamp}".
+      required:
+        - profile_id
+        - dataset_id
+        - user_arn
+
+  - name: compute_status
+    description: >
+      Poll the status of a compute job started with compute_run. Returns the
+      current state (RUNNING, SUCCEEDED, FAILED, TIMED_OUT, ABORTED), estimated
+      completion time, and — when SUCCEEDED — the result Quick Sight dataset ID
+      and name. Call every 10–30 seconds until status is SUCCEEDED or FAILED.
+    parameters:
+      type: object
+      properties:
+        job_id:
+          type: string
+          description: >
+            Job ID returned by compute_run. This is the Step Functions
+            execution ARN (or the short ID extracted from it).
+      required:
+        - job_id

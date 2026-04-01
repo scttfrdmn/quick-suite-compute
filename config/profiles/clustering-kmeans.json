@@ -1,0 +1,30 @@
+{
+  "profile_id": "clustering-kmeans",
+  "display_name": "K-Means Clustering",
+  "description": "Segments records into k groups based on numeric features using K-Means. Adds a cluster_id and cluster_distance column to every row. Useful for yield campaigns, donor segmentation, and cohort discovery.",
+  "category": "segmentation",
+  "backend": "lambda",
+  "entrypoint": "clustering.kmeans_handler",
+  "parameters": {
+    "k": {"type": "integer", "default": 5, "min": 2, "max": 20, "description": "Number of clusters"},
+    "features": {"type": "column_list", "min_columns": 2, "description": "Numeric columns to cluster on"},
+    "standardize": {"type": "boolean", "default": true, "description": "Standardize features before clustering"}
+  },
+  "input_requirements": {
+    "min_rows": 50,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "cluster_id", "type": "integer"},
+      {"name": "cluster_distance", "type": "float"}
+    ]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 30,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["clustering", "segmentation", "unsupervised", "enrollment", "survey", "advancement"]
+}

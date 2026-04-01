@@ -1,0 +1,36 @@
+{
+  "profile_id": "forecast-prophet",
+  "display_name": "Time Series Forecast (Prophet)",
+  "description": "Projects a time series forward using Facebook Prophet. Returns forecast values with confidence intervals plus trend and seasonal decomposition. Useful for enrollment planning, research expenditure trends, and financial projections.",
+  "category": "forecasting",
+  "backend": "lambda",
+  "entrypoint": "forecast.prophet_handler",
+  "parameters": {
+    "date_column": {"type": "column", "description": "Date/timestamp column (ISO format or parseable)"},
+    "value_column": {"type": "column", "description": "Numeric value column to forecast"},
+    "forecast_periods": {"type": "integer", "default": 12, "min": 1, "max": 120, "description": "Number of future periods to forecast"},
+    "seasonality_mode": {"type": "enum", "values": ["additive", "multiplicative"], "default": "additive", "description": "Seasonality model type"},
+    "include_history": {"type": "boolean", "default": true, "description": "Include historical fitted values in output"}
+  },
+  "input_requirements": {
+    "min_rows": 24,
+    "max_rows": 100000,
+    "required_column_types": ["date", "numeric"]
+  },
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [
+      {"name": "ds", "type": "date"},
+      {"name": "yhat", "type": "float"},
+      {"name": "yhat_lower", "type": "float"},
+      {"name": "yhat_upper", "type": "float"},
+      {"name": "trend", "type": "float"},
+      {"name": "yearly", "type": "float"}
+    ]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 60,
+    "typical_cost_usd": 0.002
+  },
+  "tags": ["forecast", "time-series", "enrollment", "budget", "planning", "trend"]
+}

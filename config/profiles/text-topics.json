@@ -1,0 +1,34 @@
+{
+  "profile_id": "text-topics",
+  "display_name": "Text Topic Modeling",
+  "description": "Discovers latent topics in text data using scikit-learn LDA or NMF. Adds a dominant_topic and topic_probability column to each row, plus a topic-term matrix for interpretation. Useful for analyzing open-ended survey responses and course evaluations.",
+  "category": "text-analysis",
+  "backend": "lambda",
+  "entrypoint": "text_topics.topics_handler",
+  "parameters": {
+    "text_column": {"type": "column", "description": "Column containing free-text responses"},
+    "num_topics": {"type": "integer", "default": 8, "min": 2, "max": 50, "description": "Number of topics to discover"},
+    "method": {"type": "enum", "values": ["lda", "nmf"], "default": "lda", "description": "Topic modeling algorithm"},
+    "min_doc_frequency": {"type": "float", "default": 0.02, "min": 0.001, "max": 0.5, "description": "Minimum document frequency for terms"},
+    "max_doc_frequency": {"type": "float", "default": 0.95, "min": 0.5, "max": 1.0, "description": "Maximum document frequency for terms"}
+  },
+  "input_requirements": {
+    "min_rows": 50,
+    "max_rows": 100000,
+    "required_column_types": ["string"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "dominant_topic", "type": "integer"},
+      {"name": "topic_probability", "type": "float"},
+      {"name": "topic_label", "type": "string"}
+    ],
+    "extra_tables": ["topic_terms"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 120,
+    "typical_cost_usd": 0.002
+  },
+  "tags": ["text", "nlp", "topics", "survey", "course-evaluation", "qualitative"]
+}

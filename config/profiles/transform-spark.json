@@ -1,0 +1,29 @@
+{
+  "profile_id": "transform-spark",
+  "display_name": "Large Dataset Join & Transform (Spark)",
+  "description": "Joins and transforms large datasets using Apache Spark on EMR Serverless. Handles 50M+ row joins across SIS, LMS, financial aid, and housing data. Requires EMR Serverless to be enabled in the deployment.",
+  "category": "transform",
+  "backend": "emr_serverless",
+  "entrypoint": "spark/transform.py",
+  "parameters": {
+    "additional_s3_paths": {"type": "string_list", "description": "S3 URIs of additional datasets to join"},
+    "join_keys": {"type": "column_list", "min_columns": 1, "description": "Columns to join on"},
+    "join_type": {"type": "enum", "values": ["inner", "left", "right", "full"], "default": "left", "description": "Join type"},
+    "select_columns": {"type": "column_list", "description": "Columns to include in output (empty = all)"},
+    "filter_expression": {"type": "string", "default": "", "description": "SQL WHERE clause to filter rows"}
+  },
+  "input_requirements": {
+    "min_rows": 1000,
+    "max_rows": 500000000,
+    "required_column_types": []
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": []
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 480,
+    "typical_cost_usd": 0.50
+  },
+  "tags": ["spark", "join", "transform", "sis", "lms", "integration", "large-data"]
+}
