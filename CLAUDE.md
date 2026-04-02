@@ -370,6 +370,7 @@ quick-suite-compute/
 │   ├── deliver/handler.py             # Step Functions: S3 → QS dataset
 │   ├── record-spend/handler.py        # Step Functions: update spend + write snapshot
 │   ├── handle-failure/handler.py      # Step Functions: error handling
+│   ├── audit-log/handler.py           # Step Functions: write audit record on terminal state (v0.8.0)
 │   └── profiles/                      # Per-profile analysis code
 │       ├── clustering.py
 │       ├── regression.py

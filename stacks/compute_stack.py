@@ -9,13 +9,15 @@ Resources:
   - SNS: job notification topic
   - Lambda Layer: scikit-learn, pandas, statsmodels, prophet, lifelines (Docker)
   - Lambda: compute-profiles, compute-run, compute-status (AgentCore targets)
-  - Lambda: check-budget, extract, runner, deliver, record-spend, handle-failure
+  - Lambda: check-budget, extract, runner, deliver, record-spend, handle-failure, audit-log
   - Step Functions: compute job state machine
   - IAM: three roles (tool Lambdas, runner Lambda, deliver Lambda)
   - CfnOutputs: tool Lambda ARNs for AgentCore Gateway registration
 
 Build context vars (cdk deploy --context key=value):
   enable_emr         false    Enable EMR Serverless for transform-spark profile
+  enable_vpc         false    Place SFN Lambda steps in VPC with S3 Gateway endpoint
+  enable_kms         false    Encrypt HistoryTable and compute-results bucket with CMKs
   monthly_budget_usd 50       Per-user monthly compute budget ceiling (USD)
   notification_email ""       SNS email subscription for job notifications
   agentcore_gateway_role_arn  Gateway execution role ARN for invoke permissions
@@ -37,10 +39,16 @@ from aws_cdk import (
     aws_dynamodb as dynamodb,
 )
 from aws_cdk import (
+    aws_ec2 as ec2,
+)
+from aws_cdk import (
     aws_emrserverless as emrs,
 )
 from aws_cdk import (
     aws_iam as iam,
+)
+from aws_cdk import (
+    aws_kms as kms,
 )
 from aws_cdk import (
     aws_lambda as lambda_,
@@ -87,6 +95,8 @@ class ComputeStack(Stack):
         qs_region = self.node.try_get_context("quicksight_region") or region
         qs_user = self.node.try_get_context("quicksight_user") or "Admin"
         enable_emr = bool(self.node.try_get_context("enable_emr"))
+        enable_vpc = bool(self.node.try_get_context("enable_vpc"))
+        enable_kms = bool(self.node.try_get_context("enable_kms"))
         monthly_budget_usd = int(self.node.try_get_context("monthly_budget_usd") or 50)
         notification_email = self.node.try_get_context("notification_email") or ""
         claws_resolver_arn = self.node.try_get_context("claws_resolver_arn") or ""
@@ -97,6 +107,59 @@ class ComputeStack(Stack):
         profiles_config_json = json.dumps(profiles)
 
         # -----------------------------------------------------------------
+        # Issue #26: VPC (optional — enable_vpc context flag)
+        # SFN Lambda steps are placed inside the VPC when enabled.
+        # S3 is accessed via a VPC Gateway endpoint (no NAT required).
+        # -----------------------------------------------------------------
+        vpc = None
+        vpc_subnets = None
+        if enable_vpc:
+            vpc = ec2.Vpc(
+                self,
+                "ComputeVpc",
+                vpc_name=f"{prefix}-vpc",
+                max_azs=2,
+                nat_gateways=0,
+                subnet_configuration=[
+                    ec2.SubnetConfiguration(
+                        name="isolated",
+                        subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
+                    )
+                ],
+            )
+            ec2.GatewayVpcEndpoint(
+                self,
+                "S3GatewayEndpoint",
+                vpc=vpc,
+                service=ec2.GatewayVpcEndpointAwsService.S3,
+            )
+            vpc_subnets = ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
+            )
+
+        # -----------------------------------------------------------------
+        # Issue #27: KMS CMKs (optional — enable_kms context flag)
+        # HistoryTable and compute-results bucket get customer-managed keys.
+        # -----------------------------------------------------------------
+        history_table_kms_key = None
+        bucket_kms_key = None
+        if enable_kms:
+            history_table_kms_key = kms.Key(
+                self,
+                "HistoryTableKey",
+                description=f"{prefix} HistoryTable CMK",
+                enable_key_rotation=True,
+                removal_policy=RemovalPolicy.DESTROY,
+            )
+            bucket_kms_key = kms.Key(
+                self,
+                "ComputeBucketKey",
+                description=f"{prefix} compute-results S3 CMK",
+                enable_key_rotation=True,
+                removal_policy=RemovalPolicy.DESTROY,
+            )
+
+        # -----------------------------------------------------------------
         # S3: Compute Data Bucket
         # -----------------------------------------------------------------
         compute_bucket = s3.Bucket(
@@ -105,6 +168,10 @@ class ComputeStack(Stack):
             bucket_name=f"{prefix}-{account_id}-{region}",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
+            encryption=(
+                s3.BucketEncryption.KMS if enable_kms else s3.BucketEncryption.S3_MANAGED
+            ),
+            encryption_key=bucket_kms_key if enable_kms else None,
             lifecycle_rules=[
                 s3.LifecycleRule(
                     id="DeleteInputs",
@@ -169,6 +236,8 @@ class ComputeStack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             time_to_live_attribute="ttl",
             removal_policy=RemovalPolicy.DESTROY,
+            encryption=dynamodb.TableEncryption.CUSTOMER_MANAGED if enable_kms else dynamodb.TableEncryption.AWS_MANAGED,
+            encryption_key=history_table_kms_key if enable_kms else None,
         )
         history_table.add_global_secondary_index(
             index_name="by-execution-arn",
@@ -320,6 +389,14 @@ class ComputeStack(Stack):
             "ENABLE_EMR": "true" if enable_emr else "false",
         }
 
+        # Issue #26: VPC kwargs applied to all SFN Lambda steps when enable_vpc=true
+        _vpc_kwargs = {}
+        if enable_vpc and vpc is not None:
+            _vpc_kwargs = {
+                "vpc": vpc,
+                "vpc_subnets": vpc_subnets,
+            }
+
         # -----------------------------------------------------------------
         # Lambda: Check Budget (Step Functions step)
         # -----------------------------------------------------------------
@@ -333,6 +410,7 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=128,
             environment=common_env,
+            **_vpc_kwargs,
         )
         spend_table.grant_read_data(check_budget_fn)
         notification_topic.grant_publish(check_budget_fn)
@@ -354,6 +432,7 @@ class ComputeStack(Stack):
             timeout=Duration.minutes(5),
             memory_size=512,
             environment=extract_env,
+            **_vpc_kwargs,
         )
         compute_bucket.grant_write(extract_fn)
         extract_fn.add_to_role_policy(
@@ -396,6 +475,7 @@ class ComputeStack(Stack):
             memory_size=3008,
             role=runner_role,
             environment=common_env,
+            **_vpc_kwargs,
         )
 
         # -----------------------------------------------------------------
@@ -415,6 +495,7 @@ class ComputeStack(Stack):
                 **common_env,
                 "MANIFEST_BUCKET": compute_bucket.bucket_name,
             },
+            **_vpc_kwargs,
         )
 
         # -----------------------------------------------------------------
@@ -430,6 +511,7 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=128,
             environment=common_env,
+            **_vpc_kwargs,
         )
         spend_table.grant_write_data(record_spend_fn)
         history_table.grant_write_data(record_spend_fn)
@@ -454,7 +536,25 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=128,
             environment=common_env,
+            **_vpc_kwargs,
         )
+
+        # -----------------------------------------------------------------
+        # Lambda: Audit Log (Issue #28 — terminal-state audit writer)
+        # -----------------------------------------------------------------
+        audit_log_fn = lambda_.Function(
+            self,
+            "AuditLog",
+            function_name=f"{prefix}-audit-log",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambdas/audit-log"),
+            timeout=Duration.seconds(10),
+            memory_size=128,
+            environment=common_env,
+            **_vpc_kwargs,
+        )
+        compute_bucket.grant_put(audit_log_fn)
 
         # -----------------------------------------------------------------
         # Step Functions: Compute Job State Machine
@@ -725,6 +825,47 @@ class ComputeStack(Stack):
             errors=["States.ALL"],
             result_path="$.error_info",
         )
+        # -----------------------------------------------------------------
+        # Issue #28: Audit log tasks — one per terminal path
+        # -----------------------------------------------------------------
+        audit_log_succeeded_task = tasks.LambdaInvoke(
+            self,
+            "AuditLogSucceeded",
+            lambda_function=audit_log_fn,
+            result_path="$.audit",
+            payload_response_only=True,
+            payload=sfn.TaskInput.from_object({
+                "execution_id.$": "$.execution_id",
+                "user_arn.$": "$.user_arn",
+                "profile.$": "$.profile",
+                "dataset_uri.$": "$.dataset_uri",
+                "params.$": "$.params",
+                "deliver.$": "$.deliver",
+                "compute.$": "$.compute",
+                "status": "SUCCEEDED",
+            }),
+        )
+
+        audit_log_failed_task = tasks.LambdaInvoke(
+            self,
+            "AuditLogFailed",
+            lambda_function=audit_log_fn,
+            result_path="$.audit",
+            payload_response_only=True,
+            payload=sfn.TaskInput.from_object({
+                "execution_id.$": "$.execution_id",
+                "user_arn.$": "$.user_arn",
+                "profile.$": "$.profile",
+                "dataset_uri.$": "$.dataset_uri",
+                "params.$": "$.params",
+                "status": "FAILED",
+            }),
+        )
+
+        # Wire terminal paths: success → audit → end; failure → audit → end
+        notify_success.next(audit_log_succeeded_task)
+        notify_failure.next(audit_log_failed_task)
+
         extract_task.next(route_compute)
         compute_lambda_task.next(deliver_task)
         deliver_task.next(record_spend_task)

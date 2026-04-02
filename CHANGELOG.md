@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-02
+
+### Added
+- **Issue #26 — VPC support (`enable_vpc` CDK context flag):** When `enable_vpc=true`, all Step Functions Lambda steps (check-budget, extract, runner, deliver, record-spend, handle-failure, audit-log) are placed in an isolated-subnet VPC; an S3 VPC Gateway endpoint is provisioned for S3 access without NAT; CDK changes only, no handler code changes
+- **Issue #27 — KMS encryption (`enable_kms` CDK context flag):** When `enable_kms=true`, HistoryTable uses a customer-managed KMS key with key rotation enabled; compute-results S3 bucket uses a separate CMK; both keys have `DESTROY` removal policy for dev/test; CDK changes only
+- **Issue #28 — Full audit log for all terminal job states:** New `lambdas/audit-log/handler.py` Step Functions Lambda writes an immutable JSON audit record to `s3://compute-results/audit/{year}/{month}/{job_id}.json` at the end of every terminal path (SUCCEEDED, FAILED, TIMED_OUT); audit object contains `job_id`, `profile_id`, `user_arn`, `dataset_uri`, `params`, `result_uri`, `cost_usd`, `duration_seconds`, `status`, `timestamp` — URIs only, no PII or row data; CDK wires `AuditLogSucceeded` and `AuditLogFailed` tasks into SFN chain after `NotifyUser` and `NotifyFailure` respectively; new Lambda granted `s3:PutObject` on compute bucket
+- 15 new unit tests for the audit-log handler (SUCCEEDED, FAILED, TIMED_OUT paths; correct fields; no-PII assertion; S3 write error re-raised)
+- 3 new CDK stack tests (audit-log Lambda present, state machine definition references AuditLog, VPC/KMS synthesis tests)
+
 ## [0.7.0] - 2026-04-02
 
 ### Added
