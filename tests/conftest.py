@@ -23,6 +23,8 @@ os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+os.environ.setdefault("HISTORY_TABLE", "qs-compute-history-test")
+os.environ.setdefault("STATE_MACHINE_ARN", "arn:aws:states:us-east-1:123456789012:stateMachine:qs-compute-job")
 
 REPO_ROOT = Path(__file__).parent.parent
 PROFILES_DIR = REPO_ROOT / "config" / "profiles"
@@ -61,6 +63,7 @@ def aws_env(monkeypatch):
     monkeypatch.setenv("ENABLE_EMR", "false")
     monkeypatch.setenv("STATE_MACHINE_ARN", "arn:aws:states:us-east-1:123456789012:stateMachine:qs-compute-job")
     monkeypatch.setenv("PROFILES_CONFIG", _PROFILES_JSON)
+    monkeypatch.setenv("HISTORY_TABLE", "qs-compute-history-test")
 
 
 @pytest.fixture

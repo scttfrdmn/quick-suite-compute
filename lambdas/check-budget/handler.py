@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 
 import boto3
 
+ALERT_THRESHOLD = 0.80
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -59,7 +61,31 @@ def handler(event: dict, context) -> dict:
         # Fail open — allow job to proceed, spend will be recorded on completion
         spend_usd = 0.0
 
-    budget_ok = (spend_usd + estimated_cost) <= budget_limit
+    projected = spend_usd + estimated_cost
+    budget_ok = projected <= budget_limit
+
+    # Fire a one-time SNS alert when the user crosses 80% of their monthly budget
+    threshold_alert_sent = False
+    sns_topic_arn = os.environ.get("NOTIFICATION_TOPIC_ARN", "")
+    if (
+        sns_topic_arn
+        and budget_limit > 0
+        and projected / budget_limit >= ALERT_THRESHOLD
+        and spend_usd / budget_limit < ALERT_THRESHOLD
+    ):
+        try:
+            boto3.client("sns").publish(
+                TopicArn=sns_topic_arn,
+                Subject="Compute budget 80% threshold reached",
+                Message=(
+                    f"User {user_arn} has reached {ALERT_THRESHOLD:.0%} of their "
+                    f"${budget_limit:.2f} monthly compute budget. "
+                    f"Current projected spend: ${projected:.2f}."
+                ),
+            )
+            threshold_alert_sent = True
+        except Exception as exc:
+            logger.warning(f"Failed to send budget threshold alert: {exc}")
 
     logger.info(json.dumps({
         "user_arn": user_arn,
@@ -68,11 +94,15 @@ def handler(event: dict, context) -> dict:
         "estimated_cost": estimated_cost,
         "budget_limit": budget_limit,
         "budget_ok": budget_ok,
+        "threshold_alert_sent": threshold_alert_sent,
     }))
 
-    return {
+    result = {
         "budget_ok": budget_ok,
         "spend_usd": spend_usd,
         "budget_limit_usd": budget_limit,
         "user_arn": user_arn,
     }
+    if threshold_alert_sent:
+        result["threshold_alert_sent"] = True
+    return result

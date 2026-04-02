@@ -42,8 +42,8 @@ class TestComputeStackSynthesis:
     def test_s3_bucket_created(self, template):
         template.resource_count_is("AWS::S3::Bucket", 1)
 
-    def test_dynamodb_spend_table_created(self, template):
-        template.resource_count_is("AWS::DynamoDB::Table", 1)
+    def test_dynamodb_tables_created(self, template):
+        template.resource_count_is("AWS::DynamoDB::Table", 2)
 
     def test_sns_topic_created(self, template):
         template.resource_count_is("AWS::SNS::Topic", 1)

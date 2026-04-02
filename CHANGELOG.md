@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-04-01
+
+### Fixed
+- `lambdas/layer/Dockerfile`: changed pip install `--target` from `/asset-output/python` to `/asset/python` — CDK's `Code.from_docker_build()` copies the layer from `/asset` inside the container by default; the wrong path caused `docker cp` to fail with exit code 1 during stack synthesis and CDK stack tests
+- `tests/test_stack.py`: updated DynamoDB table count assertion from 1 → 2 to reflect `SpendTable` + `HistoryTable` (added v0.4.0); renamed test to `test_dynamodb_tables_created`
+- Integration tests (`test_integration_handlers.py`): replaced `sys.path` + `import handler as X` module-loading pattern with `importlib.util.spec_from_file_location` aliases (`_integ_check_budget`, `_integ_compute_run`, `_integ_compute_status`) to prevent handler collision when all three Lambda directories are on sys.path simultaneously
+- Integration tests: fixed `TestComputeStatusHandler` status assertion to match handler's raw uppercase AWS status values (`"RUNNING"`, `"SUCCEEDED"`, `"FAILED"`) rather than lowercase strings
+
+## [0.4.1] - 2026-04-01
+
+### Added
+- Unit tests for Step Functions handler chain: `extract` (9 tests), `runner` (7 tests), `deliver` (9 tests), `handle-failure` (6 tests); covers happy paths, error propagation, cost formula, polling timeout, and manifest-ready fallback
+- Unit tests for `compute_history` (8 tests): limit clamping, missing/whitespace ARN, DynamoDB error handling, Decimal serialization
+- Unit tests for `compute_cancel` (7 tests): ARN reconstruction, execution-not-found, already-complete, and generic exception paths
+- `pandas>=2.0` and `pyarrow>=14` added to dev dependency group (required by `runner/handler.py` module-level imports)
+
+### Fixed
+- `compute_run`: validation order corrected — `profile_id` / `profiles` list is now checked before `user_arn`, so missing-profile-id and missing-dataset-id errors return before the ARN format check (resolves two failing unit tests from v0.4.0)
+
+## [0.4.0] - 2026-04-01
+
+### Added
+- Budget 80% threshold alert in `check-budget` Lambda: publishes SNS notification when a job would push the user past 80% of their monthly budget for the first time; `threshold_alert_sent` field added to response
+- CloudWatch spend metrics emitted from `record-spend` Lambda: `JobCost` (per ProfileId × UserArn) and `JobDuration` (per ProfileId) in `QuickSuiteCompute` namespace
+- CloudWatch dashboard (`qs-compute-usage`): Job Cost (24h sum), Job Duration (p99), and State Machine execution widgets; `DashboardUrl` CloudFormation output added
+- Job history DynamoDB table (`qs-compute-history`, 90-day TTL); `record-spend` Lambda writes a history item on every successful job completion
+- `compute_history` AgentCore tool Lambda: returns recent jobs for a user (most recent first, configurable limit up to 20)
+- `compute_cancel` AgentCore tool Lambda: stops a running Step Functions execution via `sfn.stop_execution()`; returns `{status: cancelled, job_id}` or descriptive error
+
 ## [0.3.0] - 2026-04-01
 
 ### Added
@@ -35,7 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EMR Serverless stub for Spark transform profile (returns `requires_emr` when not enabled)
 - CDK stack with Lambda layers for scientific Python (scikit-learn, pandas, statsmodels, prophet, lifelines) and infrastructure wiring
 
-[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/scttfrdmn/quick-suite-compute/releases/tag/v0.1.0

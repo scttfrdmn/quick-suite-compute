@@ -124,12 +124,11 @@ def handler(event: dict, context) -> dict:
         pass
     logger.info(json.dumps({"tool": _tool_name, "event": event}))
 
-    user_arn = (event.get("user_arn") or "").strip()
-    if not user_arn:
-        return {"error": 'Required parameter "user_arn" is missing'}
-    if not _ARN_RE.match(user_arn):
-        return {"error": "user_arn must be a valid IAM ARN "
-                         "(arn:aws:iam::ACCOUNT:(user|role|assumed-role)/NAME)"}
+    # Check for parallel-profile invocation or single profile_id
+    profiles_list = event.get("profiles")
+    profile_id = (event.get("profile_id") or "").strip()
+    if not profiles_list and not profile_id:
+        return {"error": 'Required parameter "profile_id" is missing'}
 
     # Validate source_uri if provided
     source_uri = (event.get("source_uri") or "").strip()
@@ -140,15 +139,15 @@ def handler(event: dict, context) -> dict:
     if not dataset_id and not source_uri:
         return {"error": 'Either "dataset_id" or "source_uri" is required'}
 
-    # Check for parallel-profile invocation
-    profiles_list = event.get("profiles")
+    user_arn = (event.get("user_arn") or "").strip()
+    if not user_arn:
+        return {"error": 'Required parameter "user_arn" is missing'}
+    if not _ARN_RE.match(user_arn):
+        return {"error": "user_arn must be a valid IAM ARN "
+                         "(arn:aws:iam::ACCOUNT:(user|role|assumed-role)/NAME)"}
+
     if profiles_list:
         return _run_parallel(event, user_arn, dataset_id, source_uri)
-
-    # Single-profile path
-    profile_id = (event.get("profile_id") or "").strip()
-    if not profile_id:
-        return {"error": 'Required parameter "profile_id" is missing'}
 
     return _run_single(event, profile_id, user_arn, dataset_id, source_uri)
 

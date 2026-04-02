@@ -55,6 +55,9 @@ from aws_cdk import (
     aws_s3_deployment as s3deploy,
 )
 from aws_cdk import (
+    aws_cloudwatch as cw,
+)
+from aws_cdk import (
     aws_stepfunctions as sfn,
 )
 from aws_cdk import (
@@ -128,6 +131,24 @@ class ComputeStack(Stack):
                 name="month", type=dynamodb.AttributeType.STRING
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        # -----------------------------------------------------------------
+        # DynamoDB: Job History
+        # -----------------------------------------------------------------
+        history_table = dynamodb.Table(
+            self,
+            "HistoryTable",
+            table_name=f"{prefix}-history",
+            partition_key=dynamodb.Attribute(
+                name="user_arn", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="started_at", type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="ttl",
             removal_policy=RemovalPolicy.DESTROY,
         )
 
@@ -262,6 +283,7 @@ class ComputeStack(Stack):
         common_env = {
             "COMPUTE_BUCKET": compute_bucket.bucket_name,
             "SPEND_TABLE": spend_table.table_name,
+            "HISTORY_TABLE": history_table.table_name,
             "NOTIFICATION_TOPIC_ARN": notification_topic.topic_arn,
             "QUICKSIGHT_ACCOUNT_ID": account_id,
             "QUICKSIGHT_REGION": qs_region,
@@ -285,6 +307,7 @@ class ComputeStack(Stack):
             environment=common_env,
         )
         spend_table.grant_read_data(check_budget_fn)
+        notification_topic.grant_publish(check_budget_fn)
 
         # -----------------------------------------------------------------
         # Lambda: Extract (Step Functions step: QS dataset → S3 Parquet)
@@ -369,6 +392,13 @@ class ComputeStack(Stack):
             environment=common_env,
         )
         spend_table.grant_write_data(record_spend_fn)
+        history_table.grant_write_data(record_spend_fn)
+        record_spend_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["cloudwatch:PutMetricData"],
+                resources=["*"],
+            )
+        )
 
         # -----------------------------------------------------------------
         # Lambda: Handle Failure (Step Functions catch)
@@ -735,11 +765,57 @@ class ComputeStack(Stack):
         )
 
         # -----------------------------------------------------------------
+        # Lambda: Compute History (AgentCore tool: compute_history)
+        # -----------------------------------------------------------------
+        history_fn = lambda_.Function(
+            self,
+            "ComputeHistory",
+            function_name=f"{prefix}-compute-history",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambdas/compute-history"),
+            timeout=Duration.seconds(10),
+            memory_size=128,
+            role=tool_role,
+            environment={
+                **common_env,
+            },
+        )
+        history_table.grant_read_data(history_fn)
+
+        # -----------------------------------------------------------------
+        # Lambda: Compute Cancel (AgentCore tool: compute_cancel)
+        # -----------------------------------------------------------------
+        cancel_fn = lambda_.Function(
+            self,
+            "ComputeCancel",
+            function_name=f"{prefix}-compute-cancel",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambdas/compute-cancel"),
+            timeout=Duration.seconds(10),
+            memory_size=128,
+            role=tool_role,
+            environment={
+                **common_env,
+                "STATE_MACHINE_ARN": state_machine.state_machine_arn,
+            },
+        )
+        cancel_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["states:StopExecution"],
+                resources=[state_machine.state_machine_arn.replace(
+                    "stateMachine", "execution"
+                ) + ":*"],
+            )
+        )
+
+        # -----------------------------------------------------------------
         # AgentCore Gateway invoke permissions
         # -----------------------------------------------------------------
         gateway_role_arn = self.node.try_get_context("agentcore_gateway_role_arn")
         if gateway_role_arn:
-            for fn in [profiles_fn, run_fn, status_fn]:
+            for fn in [profiles_fn, run_fn, status_fn, history_fn, cancel_fn]:
                 fn.add_permission(
                     "AgentCoreInvoke",
                     principal=iam.ArnPrincipal(gateway_role_arn),
@@ -753,6 +829,8 @@ class ComputeStack(Stack):
             "compute_profiles": profiles_fn.function_arn,
             "compute_run": run_fn.function_arn,
             "compute_status": status_fn.function_arn,
+            "compute_history": history_fn.function_arn,
+            "compute_cancel": cancel_fn.function_arn,
         }
 
         for tool_name, arn_value in tool_arns.items():
@@ -771,7 +849,69 @@ class ComputeStack(Stack):
             description="All tool Lambda ARNs — register each as AgentCore Gateway Lambda target",
         )
 
+        # -----------------------------------------------------------------
+        # CloudWatch Dashboard
+        # -----------------------------------------------------------------
+        dashboard = cw.Dashboard(
+            self,
+            "ComputeDashboard",
+            dashboard_name=f"{prefix}-usage",
+        )
+
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Job Cost by Profile (USD, 24h sum)",
+                left=[
+                    cw.Metric(
+                        namespace="QuickSuiteCompute",
+                        metric_name="JobCost",
+                        statistic="Sum",
+                        period=Duration.hours(24),
+                        label="Total Cost",
+                    )
+                ],
+                width=12,
+            ),
+            cw.GraphWidget(
+                title="Job Duration by Profile (seconds, p99)",
+                left=[
+                    cw.Metric(
+                        namespace="QuickSuiteCompute",
+                        metric_name="JobDuration",
+                        statistic="p99",
+                        period=Duration.hours(1),
+                        label="p99 Duration",
+                    )
+                ],
+                width=12,
+            ),
+        )
+
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="State Machine Executions",
+                left=[
+                    state_machine.metric_started(period=Duration.hours(1), label="Started"),
+                    state_machine.metric_succeeded(period=Duration.hours(1), label="Succeeded"),
+                    state_machine.metric_failed(period=Duration.hours(1), label="Failed"),
+                ],
+                width=12,
+            ),
+        )
+
+        # -----------------------------------------------------------------
+        # Outputs
+        # -----------------------------------------------------------------
         CfnOutput(self, "ComputeBucketName", value=compute_bucket.bucket_name)
         CfnOutput(self, "SpendTableName", value=spend_table.table_name)
+        CfnOutput(self, "HistoryTableName", value=history_table.table_name)
         CfnOutput(self, "StateMachineArn", value=state_machine.state_machine_arn)
         CfnOutput(self, "NotificationTopicArn", value=notification_topic.topic_arn)
+        CfnOutput(
+            self,
+            "DashboardUrl",
+            value=(
+                f"https://{self.region}.console.aws.amazon.com"
+                f"/cloudwatch/home#dashboards:name={prefix}-usage"
+            ),
+        )

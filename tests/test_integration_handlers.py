@@ -12,6 +12,7 @@ Run everything:          pytest
 """
 
 import importlib
+import importlib.util
 import json
 import os
 import sys
@@ -25,9 +26,16 @@ os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 REPO_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(REPO_ROOT / "lambdas" / "check-budget"))
-sys.path.insert(0, str(REPO_ROOT / "lambdas" / "compute-run"))
-sys.path.insert(0, str(REPO_ROOT / "lambdas" / "compute-status"))
+
+
+def _load_handler(lambda_dir: str, alias: str):
+    """Load a Lambda handler by file path into a unique sys.modules alias."""
+    path = REPO_ROOT / "lambdas" / lambda_dir / "handler.py"
+    spec = importlib.util.spec_from_file_location(alias, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[alias] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 pytestmark = pytest.mark.integration
 
@@ -104,9 +112,7 @@ def _load_check_budget(substrate_url: str, monkeypatch):
     monkeypatch.setenv("AWS_ENDPOINT_URL", substrate_url)
     monkeypatch.setenv("SPEND_TABLE", _SPEND_TABLE)
     monkeypatch.setenv("MONTHLY_BUDGET_USD", "50")
-    import handler as check_budget
-    importlib.reload(check_budget)
-    return check_budget
+    return _load_handler("check-budget", "_integ_check_budget")
 
 
 def _load_compute_run(substrate_url: str, monkeypatch, profiles_json: str):
@@ -116,17 +122,13 @@ def _load_compute_run(substrate_url: str, monkeypatch, profiles_json: str):
     monkeypatch.setenv("STATE_MACHINE_ARN", _STATE_MACHINE_ARN)
     monkeypatch.setenv("PROFILES_CONFIG", profiles_json)
     monkeypatch.setenv("ENABLE_EMR", "false")
-    import handler as compute_run
-    importlib.reload(compute_run)
-    return compute_run
+    return _load_handler("compute-run", "_integ_compute_run")
 
 
 def _load_compute_status(substrate_url: str, monkeypatch):
     monkeypatch.setenv("AWS_ENDPOINT_URL", substrate_url)
     monkeypatch.setenv("STATE_MACHINE_ARN", _STATE_MACHINE_ARN)
-    import handler as compute_status
-    importlib.reload(compute_status)
-    return compute_status
+    return _load_handler("compute-status", "_integ_compute_status")
 
 
 # ===========================================================================
@@ -346,27 +348,20 @@ class TestComputeStatusHandler:
         job_id = execution_arn.split(":")[-1]
 
         # Load compute-status handler
-        sys.path.insert(0, str(REPO_ROOT / "lambdas" / "compute-status"))
-        monkeypatch.setenv("AWS_ENDPOINT_URL", substrate_url)
-        monkeypatch.setenv("STATE_MACHINE_ARN", _STATE_MACHINE_ARN)
-        import handler as compute_status
-        importlib.reload(compute_status)
+        cs = _load_compute_status(substrate_url, monkeypatch)
 
-        result = compute_status.handler({"job_id": job_id}, None)
+        result = cs.handler({"job_id": job_id}, None)
 
         # Substrate may return RUNNING or SUCCEEDED for a pass-state machine
-        assert result.get("status") in ("running", "succeeded", "failed")
+        # Handler returns raw AWS status (uppercase)
+        assert result.get("status") in ("RUNNING", "SUCCEEDED", "FAILED")
         assert "job_id" in result or "error" in result
 
     def test_unknown_job_id_returns_error(
         self, substrate_url, reset_substrate, monkeypatch
     ):
-        sys.path.insert(0, str(REPO_ROOT / "lambdas" / "compute-status"))
-        monkeypatch.setenv("AWS_ENDPOINT_URL", substrate_url)
-        monkeypatch.setenv("STATE_MACHINE_ARN", _STATE_MACHINE_ARN)
-        import handler as compute_status
-        importlib.reload(compute_status)
+        cs = _load_compute_status(substrate_url, monkeypatch)
 
-        result = compute_status.handler({"job_id": "job-doesnotexist-99999999"}, None)
+        result = cs.handler({"job_id": "job-doesnotexist-99999999"}, None)
 
         assert "error" in result

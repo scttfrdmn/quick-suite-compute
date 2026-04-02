@@ -9,6 +9,6 @@ RUN pip install --no-cache-dir \
     lifelines==0.29.0 \
     scipy==1.14.1 \
     pyarrow==17.0.0 \
-    --target /asset-output/python
+    --target /asset/python
 
 CMD ["echo", "Layer build complete"]

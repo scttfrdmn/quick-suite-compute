@@ -19,6 +19,7 @@ Output:
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -67,5 +68,54 @@ def handler(event: dict, context) -> dict:
         logger.error(f"Failed to record spend: {exc}")
         return {"recorded": False, "spend_usd": cost, "month": month,
                 "error": str(exc)}
+
+    profile_id = (event.get("profile") or {}).get("profile_id", "unknown")
+    execution_id = event.get("execution_id", "")
+    duration_seconds = float((event.get("compute") or {}).get("duration_seconds", 0))
+
+    # Emit CloudWatch metrics for spend and duration per profile
+    try:
+        cw = boto3.client("cloudwatch")
+        cw.put_metric_data(
+            Namespace="QuickSuiteCompute",
+            MetricData=[
+                {
+                    "MetricName": "JobCost",
+                    "Dimensions": [
+                        {"Name": "ProfileId", "Value": profile_id},
+                        {"Name": "UserArn", "Value": user_arn},
+                    ],
+                    "Value": cost,
+                    "Unit": "None",
+                },
+                {
+                    "MetricName": "JobDuration",
+                    "Dimensions": [{"Name": "ProfileId", "Value": profile_id}],
+                    "Value": duration_seconds,
+                    "Unit": "Seconds",
+                },
+            ],
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to emit CW metrics: {exc}")
+
+    # Write job history record
+    history_table_name = os.environ.get("HISTORY_TABLE", "")
+    if history_table_name:
+        try:
+            hist = dynamodb.Table(history_table_name)
+            started_at = event.get("started_at") or datetime.now(timezone.utc).isoformat()
+            hist.put_item(Item={
+                "user_arn": user_arn,
+                "started_at": started_at,
+                "execution_id": execution_id,
+                "profile_id": profile_id,
+                "cost_usd": Decimal(str(cost)),
+                "duration_seconds": Decimal(str(duration_seconds)),
+                "status": "succeeded",
+                "ttl": int(time.time()) + 90 * 86400,
+            })
+        except Exception as exc:
+            logger.warning(f"Failed to write history: {exc}")
 
     return {"recorded": True, "spend_usd": cost, "month": month}
