@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-04-02
+
+### Fixed
+- `lambdas/extract/handler.py`: remove unused `import pyarrow as pa` (F401); only `pyarrow.parquet` is used
+- CI `test` job: add `setup-node@v4` and `npm install -g aws-cdk` so `cdk synth` succeeds
+- Lint: fix I001 import-sort order in `stacks/compute_stack.py` and test files; remove unused `os` and `pytest` imports
+
 ## [0.4.2] - 2026-04-01
 
 ### Fixed
