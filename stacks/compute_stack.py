@@ -931,6 +931,38 @@ class ComputeStack(Stack):
             ),
         )
 
+        # Per-user spend row (compute#12)
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Spend by User (USD, 24h sum)",
+                left=[
+                    cw.MathExpression(
+                        expression=(
+                            "SEARCH('{QuickSuiteCompute,UserArn}"
+                            " MetricName=\"JobCost\"', 'Sum', 86400)"
+                        ),
+                        label="User Spend",
+                        period=Duration.hours(24),
+                    )
+                ],
+                width=12,
+            ),
+            cw.GraphWidget(
+                title="Jobs Submitted by User (24h count)",
+                left=[
+                    cw.MathExpression(
+                        expression=(
+                            "SEARCH('{QuickSuiteCompute,UserArn}"
+                            " MetricName=\"JobCost\"', 'SampleCount', 86400)"
+                        ),
+                        label="Job Count",
+                        period=Duration.hours(24),
+                    )
+                ],
+                width=12,
+            ),
+        )
+
         # Per-profile cost and duration rows (CP-14)
         for profile in profiles:
             profile_id = profile["profile_id"]

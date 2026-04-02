@@ -47,6 +47,9 @@ logger.setLevel(logging.INFO)
 
 s3 = boto3.client("s3")
 qs = boto3.client("quicksight")
+lambda_client = boto3.client("lambda")
+
+CLAWS_RESOLVER_ARN = os.environ.get("CLAWS_RESOLVER_ARN", "")
 
 
 def handler(event: dict, context) -> dict:
@@ -64,15 +67,10 @@ def handler(event: dict, context) -> dict:
     }))
 
     # ------------------------------------------------------------------
-    # clAWS URI — not yet implemented
+    # clAWS URI — resolve via claws-resolver Lambda, then extract via QS
     # ------------------------------------------------------------------
     if source_uri.startswith("claws://"):
-        return {
-            "status": "unsupported_source",
-            "error": "clAWS URI support coming in v0.4.0",
-            "source_uri": source_uri,
-            "execution_id": execution_id,
-        }
+        return _extract_from_claws_uri(event, execution_id, compute_bucket, account_id)
 
     # ------------------------------------------------------------------
     # Direct S3 URI — bypass Quick Sight dataset lookup
@@ -295,6 +293,47 @@ def handler(event: dict, context) -> dict:
         "row_count": row_count,
         "columns": header,
     }
+
+
+def _extract_from_claws_uri(event: dict, execution_id: str, compute_bucket: str, account_id: str) -> dict:
+    """
+    Resolve a claws:// URI to a Quick Sight dataset_id via the claws-resolver
+    Lambda, then extract using the standard Quick Sight path.
+    """
+    source_uri = event.get("source_uri", "")
+    source_id = source_uri[len("claws://"):]
+    if not source_id:
+        return {"status": "error", "error": "claws:// URI missing source_id", "execution_id": execution_id}
+
+    if not CLAWS_RESOLVER_ARN:
+        return {"status": "error", "error": "CLAWS_RESOLVER_ARN not configured", "execution_id": execution_id}
+
+    try:
+        resp = lambda_client.invoke(
+            FunctionName=CLAWS_RESOLVER_ARN,
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"source_id": source_id}).encode(),
+        )
+        result = json.loads(resp["Payload"].read())
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error": f"clAWS resolver invocation failed: {exc}",
+            "execution_id": execution_id,
+        }
+
+    if "error" in result:
+        return {
+            "status": "error",
+            "error": f"clAWS resolver: {result['error']}",
+            "execution_id": execution_id,
+        }
+
+    dataset_id = result["dataset_id"]
+    modified_event = dict(event, dataset_id=dataset_id)
+    modified_event.pop("source_uri", None)
+    # Re-invoke handler logic with resolved dataset_id (tail-call via direct call)
+    return handler(modified_event, None)
 
 
 def _extract_from_s3_uri(source_uri: str, execution_id: str, compute_bucket: str) -> dict:

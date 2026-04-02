@@ -28,11 +28,15 @@ import os
 from datetime import timezone
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 sfn = boto3.client("stepfunctions")
+dynamodb = boto3.resource("dynamodb")
+
+HISTORY_TABLE = os.environ.get("HISTORY_TABLE", "")
 
 
 def _find_execution_arn(job_id: str) -> str | None:
@@ -112,6 +116,24 @@ def handler(event: dict, context) -> dict:
             result["result_dataset_name"] = deliver.get("result_dataset_name")
         except (json.JSONDecodeError, AttributeError):
             pass
+
+        # Enrich with cost/duration from HistoryTable
+        if HISTORY_TABLE:
+            try:
+                history_resp = dynamodb.Table(HISTORY_TABLE).query(
+                    IndexName="by-execution-arn",
+                    KeyConditionExpression=Key("execution_arn").eq(execution_arn),
+                    Limit=1,
+                )
+                history_items = history_resp.get("Items", [])
+                if history_items:
+                    h = history_items[0]
+                    result["actual_cost_usd"] = float(h.get("cost_usd", 0))
+                    result["duration_seconds"] = float(h.get("duration_seconds", 0))
+                    result["profile_id"] = h.get("profile_id")
+            except Exception:
+                pass  # non-fatal
+
         result["message"] = (
             f"Job completed successfully in {elapsed:.0f}s. "
             f"Results are available as a new Quick Sight dataset."

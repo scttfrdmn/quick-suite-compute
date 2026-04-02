@@ -89,6 +89,12 @@ def handler(event: dict, context) -> dict:
                     "Unit": "None",
                 },
                 {
+                    "MetricName": "JobCost",
+                    "Dimensions": [{"Name": "UserArn", "Value": user_arn}],
+                    "Value": cost,
+                    "Unit": "None",
+                },
+                {
                     "MetricName": "JobDuration",
                     "Dimensions": [{"Name": "ProfileId", "Value": profile_id}],
                     "Value": duration_seconds,

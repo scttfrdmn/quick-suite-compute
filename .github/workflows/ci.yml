@@ -54,6 +54,19 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build Substrate
+        run: |
+          git clone https://github.com/scttfrdmn/substrate.git ~/substrate
+          cd ~/substrate && make build
+
+      - name: Start Substrate
+        run: ~/substrate/bin/substrate server &
+
       - name: Run integration tests
         run: uv run pytest -m integration tests/ -v
         env:
