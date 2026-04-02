@@ -276,6 +276,7 @@ class TestRunner:
         assert "result_s3_uri" in result
         assert result["row_count"] == 2
         assert result["actual_cost_usd"] >= 0
+        assert "duration_seconds" in result
 
     def test_cost_formula(self):
         mock_s3 = _make_runner_s3()

@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 
 
@@ -151,6 +153,101 @@ class TestComputeRun:
         call_kwargs = mock_sfn.start_execution.call_args[1]
         execution_input = json.loads(call_kwargs["input"])
         assert execution_input["dataset_name"] == "My Clusters"
+
+    def test_concurrent_limit_exceeded_returns_error(self, profiles_json):
+        """Two running jobs for the same user → concurrent_limit_exceeded."""
+        user_arn = "arn:aws:iam::123456789012:user/u"
+        sfn_arn = "arn:aws:states:us-east-1:123:stateMachine:sm"
+        ex_arns = [
+            "arn:aws:states:us-east-1:123:execution:sm:j1",
+            "arn:aws:states:us-east-1:123:execution:sm:j2",
+        ]
+
+        mock_sfn = MagicMock()
+        # Paginator returns 2 running executions belonging to this user
+        page = {"executions": [{"executionArn": a} for a in ex_arns]}
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [page]
+        mock_sfn.get_paginator.return_value = mock_paginator
+        mock_sfn.describe_execution.side_effect = [
+            {"input": json.dumps({"user_arn": user_arn})},
+            {"input": json.dumps({"user_arn": user_arn})},
+        ]
+
+        with patch.dict(os.environ, {
+            "PROFILES_CONFIG": profiles_json,
+            "STATE_MACHINE_ARN": sfn_arn,
+            "MAX_CONCURRENT_JOBS_PER_USER": "2",
+        }), patch.object(_run, "sfn", mock_sfn):
+            _run._PROFILES = None
+            result = _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": user_arn,
+                },
+                None,
+            )
+        assert result["status"] == "concurrent_limit_exceeded"
+        assert result["limit"] == 2
+
+    def test_concurrent_limit_not_exceeded_proceeds(self, profiles_json):
+        """One running job → proceeds to start a new execution."""
+        user_arn = "arn:aws:iam::123456789012:user/u"
+        sfn_arn = "arn:aws:states:us-east-1:123:stateMachine:sm"
+
+        mock_sfn = MagicMock()
+        page = {"executions": [{"executionArn": "arn:aws:states:us-east-1:123:execution:sm:j1"}]}
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [page]
+        mock_sfn.get_paginator.return_value = mock_paginator
+        mock_sfn.describe_execution.return_value = {"input": json.dumps({"user_arn": user_arn})}
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:sm:j2"
+        }
+
+        with patch.dict(os.environ, {
+            "PROFILES_CONFIG": profiles_json,
+            "STATE_MACHINE_ARN": sfn_arn,
+            "MAX_CONCURRENT_JOBS_PER_USER": "2",
+        }), patch.object(_run, "sfn", mock_sfn):
+            _run._PROFILES = None
+            result = _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": user_arn,
+                },
+                None,
+            )
+        assert result.get("status") == "started"
+
+    def test_concurrent_check_error_fails_open(self, profiles_json):
+        """SFN paginator raises → concurrent check fails open, job proceeds."""
+        user_arn = "arn:aws:iam::123456789012:user/u"
+        sfn_arn = "arn:aws:states:us-east-1:123:stateMachine:sm"
+
+        mock_sfn = MagicMock()
+        mock_sfn.get_paginator.side_effect = Exception("SFN unavailable")
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:sm:j1"
+        }
+
+        with patch.dict(os.environ, {
+            "PROFILES_CONFIG": profiles_json,
+            "STATE_MACHINE_ARN": sfn_arn,
+            "MAX_CONCURRENT_JOBS_PER_USER": "2",
+        }), patch.object(_run, "sfn", mock_sfn):
+            _run._PROFILES = None
+            result = _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": user_arn,
+                },
+                None,
+            )
+        assert result.get("status") == "started"
 
     def test_defaults_merged_into_execution_params(self, profiles_json):
         mock_sfn = MagicMock()
@@ -361,3 +458,64 @@ class TestRecordSpend:
                 None,
             )
         assert result["recorded"] is False  # non-fatal — error is surfaced in return value
+
+
+# ===========================================================================
+# TestComputeStatusEnriched (CP-17)
+# ===========================================================================
+
+class TestComputeStatusEnriched:
+    def _succeeded_sfn_response(self, execution_arn="arn:aws:states:us-east-1:123:execution:sm:job-abc"):
+        from datetime import datetime, timezone
+        return {
+            "status": "SUCCEEDED",
+            "executionArn": execution_arn,
+            "startDate": datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+            "stopDate": datetime(2024, 1, 1, 10, 0, 45, tzinfo=timezone.utc),
+            "output": json.dumps({
+                "deliver": {
+                    "dataset_id": "qs-compute-enriched-ds",
+                    "result_dataset_name": "Enriched Results",
+                }
+            }),
+        }
+
+    def test_succeeded_status_includes_cost_and_duration(self):
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = self._succeeded_sfn_response()
+
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value.query.return_value = {
+            "Items": [{
+                "execution_arn": "arn:aws:states:us-east-1:123:execution:sm:job-abc",
+                "cost_usd": "0.0123",
+                "duration_seconds": "42.5",
+                "profile_id": "clustering-kmeans",
+            }]
+        }
+        with patch.object(_status, "sfn", mock_sfn), \
+             patch.object(_status, "dynamodb", mock_ddb), \
+             patch.object(_status, "HISTORY_TABLE", "qs-compute-history"):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-abc"}, None
+            )
+        assert result["status"] == "SUCCEEDED"
+        assert result["actual_cost_usd"] == pytest.approx(0.0123)
+        assert result["duration_seconds"] == pytest.approx(42.5)
+        assert result["profile_id"] == "clustering-kmeans"
+
+    def test_no_history_table_omits_cost_fields(self):
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = self._succeeded_sfn_response()
+
+        with patch.object(_status, "sfn", mock_sfn), \
+             patch.object(_status, "HISTORY_TABLE", ""):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-abc"}, None
+            )
+        assert result["status"] == "SUCCEEDED"
+        assert "actual_cost_usd" not in result
+        assert "duration_seconds" not in result
+        assert "profile_id" not in result

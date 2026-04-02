@@ -214,4 +214,5 @@ def handler(event: dict, context) -> dict:
         "row_count": len(result_df),
         "columns": list(result_df.columns),
         "actual_cost_usd": actual_cost_usd,
+        "duration_seconds": elapsed,
     }

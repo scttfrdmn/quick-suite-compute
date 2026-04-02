@@ -47,6 +47,32 @@ sfn = boto3.client("stepfunctions")
 _PROFILES: dict[str, dict] | None = None
 
 
+def _check_concurrent_limit(user_arn: str, state_machine_arn: str, limit: int) -> bool:
+    """Return True if user is at or above concurrent job limit."""
+    try:
+        paginator = sfn.get_paginator("list_executions")
+        running = 0
+        for page in paginator.paginate(
+            stateMachineArn=state_machine_arn,
+            statusFilter="RUNNING",
+            PaginationConfig={"MaxItems": 200},
+        ):
+            for ex in page.get("executions", []):
+                try:
+                    detail = sfn.describe_execution(executionArn=ex["executionArn"])
+                    inp = json.loads(detail.get("input", "{}"))
+                    if inp.get("user_arn") == user_arn:
+                        running += 1
+                        if running >= limit:
+                            return True
+                except Exception:
+                    pass
+        return False
+    except Exception as exc:
+        logger.warning(json.dumps({"concurrent_check_error": str(exc)}))
+        return False  # Fail open
+
+
 def _load_profiles() -> dict[str, dict]:
     global _PROFILES
     if _PROFILES is None:
@@ -199,6 +225,16 @@ def _run_single(event: dict, profile_id: str, user_arn: str,
     except Exception as exc:
         # Fail open — Step Functions CheckBudget is the authoritative gate
         logger.warning(json.dumps({"budget_precheck_error": str(exc)}))
+
+    # Check concurrent job limit
+    max_concurrent = int(os.environ.get("MAX_CONCURRENT_JOBS_PER_USER", "2"))
+    sfn_arn = os.environ.get("STATE_MACHINE_ARN", "")
+    if sfn_arn and _check_concurrent_limit(user_arn, sfn_arn, max_concurrent):
+        return {
+            "status": "concurrent_limit_exceeded",
+            "message": f"You already have {max_concurrent} job(s) running.",
+            "limit": max_concurrent,
+        }
 
     # Validate parameters
     user_params = event.get("parameters") or {}

@@ -89,6 +89,7 @@ class ComputeStack(Stack):
         enable_emr = bool(self.node.try_get_context("enable_emr"))
         monthly_budget_usd = int(self.node.try_get_context("monthly_budget_usd") or 50)
         notification_email = self.node.try_get_context("notification_email") or ""
+        claws_resolver_arn = self.node.try_get_context("claws_resolver_arn") or ""
 
         config_dir = Path(__file__).parent.parent / "config"
         profiles = _load_profiles(config_dir)
@@ -150,6 +151,14 @@ class ComputeStack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             time_to_live_attribute="ttl",
             removal_policy=RemovalPolicy.DESTROY,
+        )
+        history_table.add_global_secondary_index(
+            index_name="by-execution-arn",
+            partition_key=dynamodb.Attribute(
+                name="execution_arn", type=dynamodb.AttributeType.STRING
+            ),
+            projection_type=dynamodb.ProjectionType.INCLUDE,
+            non_key_attributes=["cost_usd", "duration_seconds", "profile_id"],
         )
 
         # -----------------------------------------------------------------
@@ -312,6 +321,10 @@ class ComputeStack(Stack):
         # -----------------------------------------------------------------
         # Lambda: Extract (Step Functions step: QS dataset → S3 Parquet)
         # -----------------------------------------------------------------
+        extract_env = {
+            **common_env,
+            "CLAWS_RESOLVER_ARN": claws_resolver_arn,
+        }
         extract_fn = lambda_.Function(
             self,
             "Extract",
@@ -321,7 +334,7 @@ class ComputeStack(Stack):
             code=lambda_.Code.from_asset("lambdas/extract"),
             timeout=Duration.minutes(5),
             memory_size=512,
-            environment=common_env,
+            environment=extract_env,
         )
         compute_bucket.grant_write(extract_fn)
         extract_fn.add_to_role_policy(
@@ -340,6 +353,14 @@ class ComputeStack(Stack):
                 resources=["arn:aws:s3:::*"],
             )
         )
+        # Allow extract Lambda to invoke the claws-resolver Lambda for claws:// URIs
+        if claws_resolver_arn:
+            extract_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["lambda:InvokeFunction"],
+                    resources=[claws_resolver_arn],
+                )
+            )
 
         # -----------------------------------------------------------------
         # Lambda: Runner (Step Functions step: dispatches to profile modules)
@@ -733,9 +754,19 @@ class ComputeStack(Stack):
                 **common_env,
                 "PROFILES_CONFIG": profiles_config_json,
                 "STATE_MACHINE_ARN": state_machine.state_machine_arn,
+                "MAX_CONCURRENT_JOBS_PER_USER": str(self.node.try_get_context("max_concurrent_jobs_per_user") or "2"),
             },
         )
         state_machine.grant_start_execution(run_fn)
+        run_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["states:ListExecutions", "states:DescribeExecution"],
+                resources=[
+                    state_machine.state_machine_arn,
+                    state_machine.state_machine_arn.replace("stateMachine", "execution") + ":*",
+                ],
+            )
+        )
 
         # -----------------------------------------------------------------
         # Lambda: Compute Status (AgentCore tool: compute_status)
@@ -763,6 +794,7 @@ class ComputeStack(Stack):
                 ) + ":*"],
             )
         )
+        history_table.grant_read_data(status_fn)
 
         # -----------------------------------------------------------------
         # Lambda: Compute History (AgentCore tool: compute_history)
@@ -898,6 +930,37 @@ class ComputeStack(Stack):
                 width=12,
             ),
         )
+
+        # Per-profile cost and duration rows (CP-14)
+        for profile in profiles:
+            profile_id = profile["profile_id"]
+            display_name = profile.get("display_name", profile_id)
+            dashboard.add_widgets(
+                cw.GraphWidget(
+                    title=f"{display_name} — Cost (USD/24h)",
+                    left=[cw.Metric(
+                        namespace="QuickSuiteCompute",
+                        metric_name="JobCost",
+                        statistic="Sum",
+                        period=Duration.hours(24),
+                        dimensions_map={"ProfileId": profile_id},
+                        label=profile_id,
+                    )],
+                    width=8,
+                ),
+                cw.GraphWidget(
+                    title=f"{display_name} — Duration (p99)",
+                    left=[cw.Metric(
+                        namespace="QuickSuiteCompute",
+                        metric_name="JobDuration",
+                        statistic="p99",
+                        period=Duration.hours(1),
+                        dimensions_map={"ProfileId": profile_id},
+                        label=profile_id,
+                    )],
+                    width=8,
+                ),
+            )
 
         # -----------------------------------------------------------------
         # Outputs
