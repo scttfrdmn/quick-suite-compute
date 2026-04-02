@@ -8,8 +8,6 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 REPO_ROOT = Path(__file__).parent.parent
 
 

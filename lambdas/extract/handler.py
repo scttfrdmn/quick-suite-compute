@@ -372,7 +372,6 @@ def _extract_from_s3_uri(source_uri: str, execution_id: str, compute_bucket: str
     if ext in ("parquet", "parq"):
         try:
             import pyarrow.parquet as pq  # noqa: PLC0415
-            import pyarrow as pa           # noqa: PLC0415
             table = pq.read_table(io.BytesIO(body))
             header = table.schema.names
             all_rows = [

@@ -6,7 +6,6 @@ Unit tests for Step Functions handler chain:
 import importlib.util
 import io
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch

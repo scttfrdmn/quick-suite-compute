@@ -6,7 +6,6 @@ CloudFormation resources are present.
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -19,6 +18,7 @@ sys.path.insert(0, str(REPO_ROOT))
 try:
     import aws_cdk as cdk
     from aws_cdk.assertions import Template
+
     from stacks.compute_stack import ComputeStack
     _CDK_AVAILABLE = True
 except ImportError:
