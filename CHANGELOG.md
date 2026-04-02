@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-02
+
+### Added
+- Per-user concurrent job limit: `compute_run` rejects submissions when a user has ≥ `MAX_CONCURRENT_JOBS_PER_USER` (default 2) running executions; fails open on Step Functions errors; `MAX_CONCURRENT_JOBS_PER_USER` Lambda environment variable, configurable via CDK context
+- `duration_seconds` field in runner Lambda output: elapsed wall-clock time passed through to `record-spend` and surfaced in `compute_status` response
+- Per-user spend CloudWatch dashboard: job cost (USD/24h sum) and duration (p99) widgets per profile
+
+### Fixed
+- `runner/handler.py`: column parameter values validated against column names present in the extracted dataset; mismatched column names return a descriptive error before compute starts
+
 ## [0.4.3] - 2026-04-02
 
 ### Fixed
@@ -71,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EMR Serverless stub for Spark transform profile (returns `requires_emr` when not enabled)
 - CDK stack with Lambda layers for scientific Python (scikit-learn, pandas, statsmodels, prophet, lifelines) and infrastructure wiring
 
-[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.2...HEAD
+[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.3...v0.5.0
 [0.4.2]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.3.0...v0.4.0
