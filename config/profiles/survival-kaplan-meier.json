@@ -6,32 +6,84 @@
   "backend": "lambda",
   "entrypoint": "survival.kaplan_meier_handler",
   "parameters": {
-    "duration_column": {"type": "column", "description": "Time-to-event or censoring column (numeric, in semesters or years)"},
-    "event_column": {"type": "column", "description": "Event observed indicator column (1 = event occurred, 0 = censored)"},
-    "group_column": {"type": "column", "description": "Grouping column for stratified analysis (e.g., demographic category)"},
-    "confidence_level": {"type": "float", "default": 0.95, "min": 0.80, "max": 0.99, "description": "Confidence interval level for survival curves"}
+    "duration_column": {
+      "type": "column",
+      "description": "Time-to-event or censoring column (numeric, in semesters or years)"
+    },
+    "event_column": {
+      "type": "column",
+      "description": "Event observed indicator column (1 = event occurred, 0 = censored)"
+    },
+    "group_column": {
+      "type": "column",
+      "description": "Grouping column for stratified analysis (e.g., demographic category)"
+    },
+    "confidence_level": {
+      "type": "float",
+      "default": 0.95,
+      "min": 0.8,
+      "max": 0.99,
+      "description": "Confidence interval level for survival curves"
+    }
   },
   "input_requirements": {
     "min_rows": 50,
     "max_rows": 500000,
-    "required_column_types": ["numeric"]
+    "required_column_types": [
+      "numeric"
+    ],
+    "column_parameters": [
+      "duration_column",
+      "event_column"
+    ]
   },
   "output_schema": {
     "preserves_input_columns": false,
     "added_columns": [
-      {"name": "group", "type": "string"},
-      {"name": "timeline", "type": "float"},
-      {"name": "survival_probability", "type": "float"},
-      {"name": "survival_lower", "type": "float"},
-      {"name": "survival_upper", "type": "float"},
-      {"name": "at_risk", "type": "integer"},
-      {"name": "events", "type": "integer"}
+      {
+        "name": "group",
+        "type": "string"
+      },
+      {
+        "name": "timeline",
+        "type": "float"
+      },
+      {
+        "name": "survival_probability",
+        "type": "float"
+      },
+      {
+        "name": "survival_lower",
+        "type": "float"
+      },
+      {
+        "name": "survival_upper",
+        "type": "float"
+      },
+      {
+        "name": "at_risk",
+        "type": "integer"
+      },
+      {
+        "name": "events",
+        "type": "integer"
+      }
     ],
-    "extra_tables": ["log_rank_test", "median_survival"]
+    "extra_tables": [
+      "log_rank_test",
+      "median_survival"
+    ]
   },
   "cost_estimate": {
     "typical_duration_seconds": 25,
     "typical_cost_usd": 0.001
   },
-  "tags": ["survival", "kaplan-meier", "time-to-degree", "equity", "tenure", "retention"]
+  "tags": [
+    "survival",
+    "kaplan-meier",
+    "time-to-degree",
+    "equity",
+    "tenure",
+    "retention"
+  ]
 }

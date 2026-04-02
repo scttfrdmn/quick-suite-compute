@@ -109,6 +109,21 @@ def _write_result(df: pd.DataFrame, metadata: dict, execution_id: str) -> tuple[
     )
 
 
+def _validate_columns(profile: dict, parameters: dict, available_columns: list) -> list:
+    """Return list of missing column values, or [] if all referenced columns exist."""
+    column_params = profile.get("input_requirements", {}).get("column_parameters", [])
+    missing = []
+    for param_name in column_params:
+        val = parameters.get(param_name)
+        if val is None:
+            continue  # param not supplied — skip (handles optional / either-or params)
+        cols = val if isinstance(val, list) else [val]
+        for col in cols:
+            if col and col not in available_columns:
+                missing.append(col)
+    return missing
+
+
 def _dispatch(profile: dict, df: pd.DataFrame, parameters: dict) -> tuple[pd.DataFrame, dict]:
     """Dispatch to the profile module and return (result_df, diagnostics)."""
     entrypoint = profile["entrypoint"]  # e.g. "clustering.kmeans_handler"
@@ -137,6 +152,18 @@ def handler(event: dict, context) -> dict:
             "extract.input_s3_uri is empty — the extract step may have failed "
             "or returned an unsupported_source error"
         )
+
+    # Validate that column parameters reference columns that actually exist
+    available_columns = extract.get("columns") or []
+    if available_columns:
+        missing = _validate_columns(profile, parameters, available_columns)
+        if missing:
+            return {
+                "status": "validation_error",
+                "missing_columns": missing,
+                "available_columns": available_columns,
+                "execution_id": execution_id,
+            }
 
     start_time = time.monotonic()
 

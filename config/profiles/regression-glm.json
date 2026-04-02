@@ -1,32 +1,73 @@
 {
   "profile_id": "regression-glm",
   "display_name": "Regression (GLM)",
-  "description": "Linear or logistic regression using statsmodels GLM. Returns predictions, coefficients, and diagnostics (R², AUC, p-values). Useful for predicting graduation probability, donor lapse risk, or any continuous/binary outcome.",
+  "description": "Linear or logistic regression using statsmodels GLM. Returns predictions, coefficients, and diagnostics (R\u00b2, AUC, p-values). Useful for predicting graduation probability, donor lapse risk, or any continuous/binary outcome.",
   "category": "prediction",
   "backend": "lambda",
   "entrypoint": "regression.glm_handler",
   "parameters": {
-    "target": {"type": "column", "description": "Outcome column to predict"},
-    "features": {"type": "column_list", "min_columns": 1, "description": "Predictor columns"},
-    "model_type": {"type": "enum", "values": ["linear", "logistic"], "default": "logistic", "description": "Regression family"},
-    "include_interactions": {"type": "boolean", "default": false, "description": "Add pairwise interaction terms"}
+    "target": {
+      "type": "column",
+      "description": "Outcome column to predict"
+    },
+    "features": {
+      "type": "column_list",
+      "min_columns": 1,
+      "description": "Predictor columns"
+    },
+    "model_type": {
+      "type": "enum",
+      "values": [
+        "linear",
+        "logistic"
+      ],
+      "default": "logistic",
+      "description": "Regression family"
+    },
+    "include_interactions": {
+      "type": "boolean",
+      "default": false,
+      "description": "Add pairwise interaction terms"
+    }
   },
   "input_requirements": {
     "min_rows": 100,
     "max_rows": 500000,
-    "required_column_types": ["numeric"]
+    "required_column_types": [
+      "numeric"
+    ],
+    "column_parameters": [
+      "features",
+      "target"
+    ]
   },
   "output_schema": {
     "preserves_input_columns": true,
     "added_columns": [
-      {"name": "predicted_value", "type": "float"},
-      {"name": "prediction_probability", "type": "float"}
+      {
+        "name": "predicted_value",
+        "type": "float"
+      },
+      {
+        "name": "prediction_probability",
+        "type": "float"
+      }
     ],
-    "extra_tables": ["coefficients", "diagnostics"]
+    "extra_tables": [
+      "coefficients",
+      "diagnostics"
+    ]
   },
   "cost_estimate": {
     "typical_duration_seconds": 45,
     "typical_cost_usd": 0.001
   },
-  "tags": ["regression", "prediction", "supervised", "graduation", "retention", "fundraising"]
+  "tags": [
+    "regression",
+    "prediction",
+    "supervised",
+    "graduation",
+    "retention",
+    "fundraising"
+  ]
 }

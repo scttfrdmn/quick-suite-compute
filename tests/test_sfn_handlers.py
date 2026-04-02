@@ -124,10 +124,12 @@ class TestExtract:
         assert "input_s3_uri" in result
         mock_qs.describe_data_set.assert_not_called()
 
-    def test_claws_uri_returns_unsupported(self):
-        with patch.object(_extract, "qs", MagicMock()), patch.object(_extract, "s3", MagicMock()):
+    def test_claws_uri_without_resolver_arn_returns_error(self):
+        with patch.object(_extract, "qs", MagicMock()), patch.object(_extract, "s3", MagicMock()), \
+             patch.object(_extract, "CLAWS_RESOLVER_ARN", ""):
             result = _extract.handler(self._event(source_uri="claws://dataset/x"), None)
-        assert result["status"] == "unsupported_source"
+        assert result["status"] == "error"
+        assert "CLAWS_RESOLVER_ARN" in result["error"]
         assert result["execution_id"] == "exec-abc123"
 
     def test_qs_describe_dataset_error_raises(self):
@@ -331,6 +333,68 @@ class TestRunner:
             with pytest.raises(ValueError, match="input_s3_uri"):
                 _runner.handler(event, None)
 
+    def test_validation_error_when_feature_column_missing(self):
+        """Runner returns validation_error before S3 access when a feature column is absent."""
+        event = {
+            "execution_id": "exec-col-validate",
+            "profile": {
+                "profile_id": "clustering-kmeans",
+                "entrypoint": "clustering.kmeans_handler",
+                "input_requirements": {"column_parameters": ["features"]},
+            },
+            "parameters": {"features": ["age", "gpa"], "k": 3},
+            "extract": {
+                "input_s3_uri": "s3://bucket/data.parquet",
+                "columns": ["id", "age"],  # "gpa" is missing
+            },
+        }
+        mock_s3 = _make_runner_s3()
+        result = _runner.handler(event, None)
+        assert result["status"] == "validation_error"
+        assert "gpa" in result["missing_columns"]
+        assert result["available_columns"] == ["id", "age"]
+        mock_s3.get_object.assert_not_called()  # no S3 access before validation
+
+    def test_validation_passes_when_all_columns_present(self):
+        """Runner proceeds normally when all referenced columns exist."""
+        event = {
+            "execution_id": "exec-col-ok",
+            "profile": {
+                "profile_id": "clustering-kmeans",
+                "entrypoint": "clustering.kmeans_handler",
+                "input_requirements": {"column_parameters": ["features"]},
+            },
+            "parameters": {"features": ["age", "gpa"], "k": 3},
+            "extract": {
+                "input_s3_uri": "s3://bucket/data.parquet",
+                "columns": ["id", "age", "gpa"],  # all present
+            },
+        }
+        mock_s3 = _make_runner_s3(csv_data=b"id,age,gpa\n1,20,3.5\n2,21,3.8\n")
+        mock_mod = _make_profile_module()
+        write_result_return = ("s3://bucket/results/exec-col-ok/data.parquet", "s3://bucket/results/exec-col-ok/metadata.json")
+        with patch.object(_runner, "s3_client", mock_s3), \
+             patch.object(_runner, "importlib") as mock_importlib, \
+             patch.object(_runner, "_write_result", return_value=write_result_return):
+            mock_importlib.import_module.return_value = mock_mod
+            result = _runner.handler(event, None)
+        assert "result_s3_uri" in result
+        assert result.get("status") != "validation_error"
+
+    def test_validation_skipped_when_columns_not_in_extract(self):
+        """Runner skips validation when extract step didn't provide column list."""
+        event = _runner_event()
+        # _runner_event() has no "columns" in extract — validation should be skipped
+        mock_s3 = _make_runner_s3()
+        mock_mod = _make_profile_module()
+        write_result_return = ("s3://bucket/results/exec-test-runner/data.parquet", "s3://bucket/results/exec-test-runner/metadata.json")
+        with patch.object(_runner, "s3_client", mock_s3), \
+             patch.object(_runner, "importlib") as mock_importlib, \
+             patch.object(_runner, "_write_result", return_value=write_result_return):
+            mock_importlib.import_module.return_value = mock_mod
+            result = _runner.handler(event, None)
+        assert "result_s3_uri" in result  # proceeded normally
+
 
 # ---------------------------------------------------------------------------
 # Deliver helpers
@@ -522,3 +586,64 @@ class TestHandleFailure:
         assert "execution_id" in result
         assert result["execution_id"] == "unknown"
         assert result["error_code"] == "UnknownError"
+
+
+# ===========================================================================
+# TestExtractClawsUri (CP-16)
+# ===========================================================================
+
+BASE_EVENT = {"execution_id": "exec-claws-test", "dataset_id": ""}
+RESOLVER_ARN = "arn:aws:lambda:us-east-1:123456789012:function:claws-resolver"
+
+
+class TestExtractClawsUri:
+    def _make_resolver_response(self, dataset_id=None, error=None):
+        payload = {"dataset_id": dataset_id} if dataset_id else {"error": error or "not found"}
+        return {"Payload": io.BytesIO(json.dumps(payload).encode())}
+
+    def test_happy_path_resolves_and_extracts(self):
+        mock_lambda = MagicMock()
+        mock_lambda.invoke.return_value = self._make_resolver_response(dataset_id="qs-ds-abc123")
+        mock_qs, mock_s3 = _make_extract_mocks()
+        with patch.object(_extract, "lambda_client", mock_lambda), \
+             patch.object(_extract, "qs", mock_qs), \
+             patch.object(_extract, "s3", mock_s3), \
+             patch.object(_extract, "CLAWS_RESOLVER_ARN", RESOLVER_ARN):
+            result = _extract.handler({**BASE_EVENT, "source_uri": "claws://roda-noaa-ghcn"}, None)
+        assert "error" not in result
+        assert "input_s3_uri" in result
+        mock_lambda.invoke.assert_called_once_with(
+            FunctionName=RESOLVER_ARN,
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"source_id": "roda-noaa-ghcn"}).encode(),
+        )
+
+    def test_resolver_returns_error(self):
+        mock_lambda = MagicMock()
+        mock_lambda.invoke.return_value = self._make_resolver_response(error="source not found")
+        with patch.object(_extract, "lambda_client", mock_lambda), \
+             patch.object(_extract, "CLAWS_RESOLVER_ARN", RESOLVER_ARN):
+            result = _extract.handler({**BASE_EVENT, "source_uri": "claws://roda-missing"}, None)
+        assert result["status"] == "error"
+        assert "source not found" in result["error"]
+
+    def test_resolver_arn_not_configured(self):
+        with patch.object(_extract, "CLAWS_RESOLVER_ARN", ""):
+            result = _extract.handler({**BASE_EVENT, "source_uri": "claws://roda-noaa-ghcn"}, None)
+        assert result["status"] == "error"
+        assert "CLAWS_RESOLVER_ARN" in result["error"]
+
+    def test_resolver_invocation_exception(self):
+        mock_lambda = MagicMock()
+        mock_lambda.invoke.side_effect = Exception("network timeout")
+        with patch.object(_extract, "lambda_client", mock_lambda), \
+             patch.object(_extract, "CLAWS_RESOLVER_ARN", RESOLVER_ARN):
+            result = _extract.handler({**BASE_EVENT, "source_uri": "claws://roda-noaa-ghcn"}, None)
+        assert result["status"] == "error"
+        assert "network timeout" in result["error"]
+
+    def test_missing_source_id_returns_error(self):
+        with patch.object(_extract, "CLAWS_RESOLVER_ARN", RESOLVER_ARN):
+            result = _extract.handler({**BASE_EVENT, "source_uri": "claws://"}, None)
+        assert result["status"] == "error"
+        assert "source_id" in result["error"]

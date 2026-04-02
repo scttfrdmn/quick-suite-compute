@@ -6,28 +6,74 @@
   "backend": "lambda",
   "entrypoint": "geo_enrich.geo_enrich_handler",
   "parameters": {
-    "lat_column": {"type": "column", "description": "Latitude column (use with lon_column)"},
-    "lon_column": {"type": "column", "description": "Longitude column (use with lat_column)"},
-    "zip_column": {"type": "column", "description": "ZIP code column (alternative to lat/lon)"},
-    "enrichment_source": {"type": "enum", "values": ["acs5", "tiger"], "default": "acs5", "description": "Census data source"},
-    "variables": {"type": "string_list", "default": ["median_income", "population", "pct_bachelor_plus"], "description": "Census variable names to append"}
+    "lat_column": {
+      "type": "column",
+      "description": "Latitude column (use with lon_column)"
+    },
+    "lon_column": {
+      "type": "column",
+      "description": "Longitude column (use with lat_column)"
+    },
+    "zip_column": {
+      "type": "column",
+      "description": "ZIP code column (alternative to lat/lon)"
+    },
+    "enrichment_source": {
+      "type": "enum",
+      "values": [
+        "acs5",
+        "tiger"
+      ],
+      "default": "acs5",
+      "description": "Census data source"
+    },
+    "variables": {
+      "type": "string_list",
+      "default": [
+        "median_income",
+        "population",
+        "pct_bachelor_plus"
+      ],
+      "description": "Census variable names to append"
+    }
   },
   "input_requirements": {
     "min_rows": 1,
     "max_rows": 500000,
-    "required_column_types": []
+    "required_column_types": [],
+    "column_parameters": [
+      "lat_column",
+      "lon_column",
+      "zip_column"
+    ]
   },
   "output_schema": {
     "preserves_input_columns": true,
     "added_columns": [
-      {"name": "census_tract", "type": "string"},
-      {"name": "geo_state_fips", "type": "string"},
-      {"name": "geo_county_fips", "type": "string"}
+      {
+        "name": "census_tract",
+        "type": "string"
+      },
+      {
+        "name": "geo_state_fips",
+        "type": "string"
+      },
+      {
+        "name": "geo_county_fips",
+        "type": "string"
+      }
     ]
   },
   "cost_estimate": {
     "typical_duration_seconds": 180,
     "typical_cost_usd": 0.05
   },
-  "tags": ["geo", "census", "demographics", "equity", "alumni", "address-enrichment"]
+  "tags": [
+    "geo",
+    "census",
+    "demographics",
+    "equity",
+    "alumni",
+    "address-enrichment"
+  ]
 }

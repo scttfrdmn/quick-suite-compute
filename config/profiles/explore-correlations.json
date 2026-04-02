@@ -6,29 +6,78 @@
   "backend": "lambda",
   "entrypoint": "correlations.correlations_handler",
   "parameters": {
-    "features": {"type": "column_list", "min_columns": 2, "description": "Columns to include in correlation analysis"},
-    "target": {"type": "column", "description": "Optional target column for feature importance ranking (omit for pairwise only)"},
-    "method": {"type": "enum", "values": ["pearson", "spearman", "mutual_info"], "default": "pearson", "description": "Correlation method"},
-    "top_n": {"type": "integer", "default": 20, "min": 2, "max": 100, "description": "Number of top feature pairs to return"}
+    "features": {
+      "type": "column_list",
+      "min_columns": 2,
+      "description": "Columns to include in correlation analysis"
+    },
+    "target": {
+      "type": "column",
+      "description": "Optional target column for feature importance ranking (omit for pairwise only)"
+    },
+    "method": {
+      "type": "enum",
+      "values": [
+        "pearson",
+        "spearman",
+        "mutual_info"
+      ],
+      "default": "pearson",
+      "description": "Correlation method"
+    },
+    "top_n": {
+      "type": "integer",
+      "default": 20,
+      "min": 2,
+      "max": 100,
+      "description": "Number of top feature pairs to return"
+    }
   },
   "input_requirements": {
     "min_rows": 30,
     "max_rows": 500000,
-    "required_column_types": ["numeric"]
+    "required_column_types": [
+      "numeric"
+    ],
+    "column_parameters": [
+      "features"
+    ]
   },
   "output_schema": {
     "preserves_input_columns": false,
     "added_columns": [
-      {"name": "feature_a", "type": "string"},
-      {"name": "feature_b", "type": "string"},
-      {"name": "correlation", "type": "float"},
-      {"name": "p_value", "type": "float"},
-      {"name": "rank", "type": "integer"}
+      {
+        "name": "feature_a",
+        "type": "string"
+      },
+      {
+        "name": "feature_b",
+        "type": "string"
+      },
+      {
+        "name": "correlation",
+        "type": "float"
+      },
+      {
+        "name": "p_value",
+        "type": "float"
+      },
+      {
+        "name": "rank",
+        "type": "integer"
+      }
     ]
   },
   "cost_estimate": {
     "typical_duration_seconds": 15,
     "typical_cost_usd": 0.001
   },
-  "tags": ["correlation", "feature-importance", "exploration", "survey", "engagement", "eda"]
+  "tags": [
+    "correlation",
+    "feature-importance",
+    "exploration",
+    "survey",
+    "engagement",
+    "eda"
+  ]
 }

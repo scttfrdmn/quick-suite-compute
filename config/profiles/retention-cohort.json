@@ -6,29 +6,76 @@
   "backend": "lambda",
   "entrypoint": "retention.cohort_handler",
   "parameters": {
-    "student_id_column": {"type": "column", "description": "Unique student identifier column"},
-    "cohort_column": {"type": "column", "description": "Entry term or cohort label column (e.g., Fall 2021)"},
-    "event_date_column": {"type": "column", "description": "Enrollment/event date column"},
-    "period_grain": {"type": "enum", "values": ["semester", "annual"], "default": "semester", "description": "Reporting period granularity"}
+    "student_id_column": {
+      "type": "column",
+      "description": "Unique student identifier column"
+    },
+    "cohort_column": {
+      "type": "column",
+      "description": "Entry term or cohort label column (e.g., Fall 2021)"
+    },
+    "event_date_column": {
+      "type": "column",
+      "description": "Enrollment/event date column"
+    },
+    "period_grain": {
+      "type": "enum",
+      "values": [
+        "semester",
+        "annual"
+      ],
+      "default": "semester",
+      "description": "Reporting period granularity"
+    }
   },
   "input_requirements": {
     "min_rows": 50,
     "max_rows": 2000000,
-    "required_column_types": ["string", "date"]
+    "required_column_types": [
+      "string",
+      "date"
+    ],
+    "column_parameters": [
+      "student_id_column",
+      "cohort_column",
+      "event_date_column"
+    ]
   },
   "output_schema": {
     "preserves_input_columns": false,
     "added_columns": [
-      {"name": "cohort", "type": "string"},
-      {"name": "period", "type": "string"},
-      {"name": "enrolled_count", "type": "integer"},
-      {"name": "retention_rate", "type": "float"},
-      {"name": "attrition_rate", "type": "float"}
+      {
+        "name": "cohort",
+        "type": "string"
+      },
+      {
+        "name": "period",
+        "type": "string"
+      },
+      {
+        "name": "enrolled_count",
+        "type": "integer"
+      },
+      {
+        "name": "retention_rate",
+        "type": "float"
+      },
+      {
+        "name": "attrition_rate",
+        "type": "float"
+      }
     ]
   },
   "cost_estimate": {
     "typical_duration_seconds": 20,
     "typical_cost_usd": 0.001
   },
-  "tags": ["retention", "cohort", "persistence", "IPEDS", "accreditation", "enrollment-management"]
+  "tags": [
+    "retention",
+    "cohort",
+    "persistence",
+    "IPEDS",
+    "accreditation",
+    "enrollment-management"
+  ]
 }
