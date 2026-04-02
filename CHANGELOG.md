@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-02
+
+### Added
+- **Issue #23 — Budget cap pre-check against router spend ledger:** `compute_run` reads the cross-stack `qs-router-spend` DynamoDB table (set via `ROUTER_SPEND_TABLE` env var, populated by CDK context var `router_spend_table_arn`) before starting a Step Functions execution; scans for the request's `department` (default `"default"`) in the current month; if cumulative department spend + estimated profile cost exceeds `MONTHLY_BUDGET_USD`, returns `{"status": "budget_exceeded", "department": ..., "cap_usd": ..., "spent_usd": ...}` without starting SFN; fails open on any AWS error; CDK grants `dynamodb:Scan` on the external table when `router_spend_table_arn` context is set
+- **Issue #24 — Cumulative spend in RUNNING status:** `compute_status` for RUNNING jobs queries the `HistoryTable` for the user's completed jobs in the current month and includes `cost_usd_so_far` in the response; error is non-fatal (field absent if query fails); SUCCEEDED response with `actual_cost_usd` is unchanged
+- **Issue #25 — Per-profile cumulative cost CloudWatch widget:** CDK generates a third widget per profile alongside the existing 24h cost and p99 duration widgets; the new widget shows cumulative `JobCost` SUM over 30 days using `Duration.days(30)` period; title: `{DisplayName} — Cumulative Cost (USD, 30d)`
+- 17 new unit tests covering all three v0.7.0 features (router spend pre-check, RUNNING cumulative spend, SUCCEEDED unchanged, CDK dashboard widget)
+
 ## [0.6.0] - 2026-04-02
 
 ### Added

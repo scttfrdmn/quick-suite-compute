@@ -90,6 +90,7 @@ class ComputeStack(Stack):
         monthly_budget_usd = int(self.node.try_get_context("monthly_budget_usd") or 50)
         notification_email = self.node.try_get_context("notification_email") or ""
         claws_resolver_arn = self.node.try_get_context("claws_resolver_arn") or ""
+        router_spend_table_arn = self.node.try_get_context("router_spend_table_arn") or ""
 
         config_dir = Path(__file__).parent.parent / "config"
         profiles = _load_profiles(config_dir)
@@ -759,6 +760,17 @@ class ComputeStack(Stack):
         # -----------------------------------------------------------------
         # Lambda: Compute Run (AgentCore tool: compute_run)
         # -----------------------------------------------------------------
+        run_env = {
+            **common_env,
+            "PROFILES_CONFIG": profiles_config_json,
+            "STATE_MACHINE_ARN": state_machine.state_machine_arn,
+            "MAX_CONCURRENT_JOBS_PER_USER": str(self.node.try_get_context("max_concurrent_jobs_per_user") or "2"),
+        }
+        if router_spend_table_arn:
+            # Issue #23: cross-stack router spend table name derived from ARN
+            # ARN format: arn:aws:dynamodb:region:account:table/TABLE_NAME
+            run_env["ROUTER_SPEND_TABLE"] = router_spend_table_arn.split("/")[-1]
+
         run_fn = lambda_.Function(
             self,
             "ComputeRun",
@@ -769,14 +781,18 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(30),
             memory_size=256,
             role=tool_role,
-            environment={
-                **common_env,
-                "PROFILES_CONFIG": profiles_config_json,
-                "STATE_MACHINE_ARN": state_machine.state_machine_arn,
-                "MAX_CONCURRENT_JOBS_PER_USER": str(self.node.try_get_context("max_concurrent_jobs_per_user") or "2"),
-            },
+            environment=run_env,
         )
         state_machine.grant_start_execution(run_fn)
+
+        # Issue #23: grant compute-run Lambda read access to the router spend table
+        if router_spend_table_arn:
+            run_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["dynamodb:Scan"],
+                    resources=[router_spend_table_arn],
+                )
+            )
         run_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:ListExecutions", "states:DescribeExecution"],
@@ -1029,7 +1045,7 @@ class ComputeStack(Stack):
             ),
         )
 
-        # Per-profile cost and duration rows (CP-14)
+        # Per-profile cost and duration rows (CP-14) + cumulative cost widget (Issue #25)
         for profile in profiles:
             profile_id = profile["profile_id"]
             display_name = profile.get("display_name", profile_id)
@@ -1055,6 +1071,19 @@ class ComputeStack(Stack):
                         period=Duration.hours(1),
                         dimensions_map={"ProfileId": profile_id},
                         label=profile_id,
+                    )],
+                    width=8,
+                ),
+                # Issue #25: cumulative cost over 30 days per profile
+                cw.GraphWidget(
+                    title=f"{display_name} — Cumulative Cost (USD, 30d)",
+                    left=[cw.Metric(
+                        namespace="QuickSuiteCompute",
+                        metric_name="JobCost",
+                        statistic="Sum",
+                        period=Duration.days(30),
+                        dimensions_map={"ProfileId": profile_id},
+                        label=f"{profile_id} 30d",
                     )],
                     width=8,
                 ),

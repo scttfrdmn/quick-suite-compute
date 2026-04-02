@@ -187,6 +187,30 @@ def handler(event: dict, context) -> dict:
         except (json.JSONDecodeError, AttributeError):
             pass
 
+        # Issue #24: cumulative spend so far this month for RUNNING jobs.
+        # Query HistoryTable for completed jobs for this user in the current month.
+        if HISTORY_TABLE:
+            try:
+                from datetime import datetime as _dt
+                from boto3.dynamodb.conditions import Key as _Key, Attr as _Attr
+                inp_data = json.loads(resp.get("input") or "{}")
+                running_user_arn = inp_data.get("user_arn", "")
+                current_month_prefix = _dt.now(timezone.utc).strftime("%Y-%m")
+                history_running_resp = dynamodb.Table(HISTORY_TABLE).query(
+                    KeyConditionExpression=(
+                        _Key("user_arn").eq(running_user_arn)
+                        & _Key("started_at").begins_with(current_month_prefix)
+                    ),
+                    ProjectionExpression="cost_usd",
+                )
+                cost_so_far = sum(
+                    float(h.get("cost_usd", 0))
+                    for h in history_running_resp.get("Items", [])
+                )
+                result["cost_usd_so_far"] = cost_so_far
+            except Exception:
+                pass  # non-fatal
+
         result["message"] = (
             f"Job is running ({elapsed_running:.0f}s elapsed). "
             "Check again in 15–30 seconds."

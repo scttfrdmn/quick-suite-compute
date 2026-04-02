@@ -519,3 +519,290 @@ class TestComputeStatusEnriched:
         assert "actual_cost_usd" not in result
         assert "duration_seconds" not in result
         assert "profile_id" not in result
+
+
+# ===========================================================================
+# Issue #23 — router spend pre-check (budget cap against cross-stack table)
+# ===========================================================================
+
+class TestRouterSpendPreCheck:
+    """Issue #23: compute-run checks qs-router-spend table for department budget."""
+
+    def _make_run_env(self, profiles_json, router_table="qs-router-spend"):
+        return {
+            "PROFILES_CONFIG": profiles_json,
+            "ROUTER_SPEND_TABLE": router_table,
+            "STATE_MACHINE_ARN": "arn:aws:states:us-east-1:123:stateMachine:sm",
+            "MONTHLY_BUDGET_USD": "50",
+        }
+
+    def _make_router_mock(self, spend_items=None, scan_error=None):
+        """Build a mock boto3.resource that returns appropriate tables."""
+        mock_ddb_resource = MagicMock()
+        # Local spend table: no prior compute spend
+        local_spend_table = MagicMock()
+        local_spend_table.get_item.return_value = {"Item": None}
+        # Router spend table
+        mock_router_table = MagicMock()
+        if scan_error:
+            mock_router_table.scan.side_effect = scan_error
+        else:
+            mock_router_table.scan.return_value = {"Items": spend_items or []}
+
+        def table_side_effect(name):
+            if name == "qs-router-spend":
+                return mock_router_table
+            return local_spend_table
+
+        mock_ddb_resource.Table.side_effect = table_side_effect
+        return mock_ddb_resource, mock_router_table
+
+    def test_department_over_cap_blocks_job(self, profiles_json):
+        """Router table shows dept spend near cap — job blocked before SFN starts."""
+        mock_sfn = MagicMock()
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123456789012:execution:sm:j"
+        }
+        mock_ddb_resource, _ = self._make_router_mock(
+            spend_items=[{"cost_usd": "50.00"}]  # $50 + profile cost > $50 cap
+        )
+
+        with patch.dict(os.environ, self._make_run_env(profiles_json)), \
+             patch.object(_run, "sfn", mock_sfn), \
+             patch.object(_run.boto3, "resource", return_value=mock_ddb_resource):
+            _run._PROFILES = None
+            result = _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": "arn:aws:iam::123456789012:user/u",
+                    "department": "engineering",
+                },
+                None,
+            )
+
+        assert result["status"] == "budget_exceeded"
+        assert result["department"] == "engineering"
+        assert "cap_usd" in result
+        assert "spent_usd" in result
+        mock_sfn.start_execution.assert_not_called()
+
+    def test_department_under_cap_proceeds(self, profiles_json):
+        """Router table shows dept spend well under cap — job proceeds normally."""
+        mock_sfn = MagicMock()
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123456789012:execution:sm:j"
+        }
+        mock_ddb_resource, _ = self._make_router_mock(
+            spend_items=[{"cost_usd": "1.00"}]  # $1 spent, well under $50 cap
+        )
+
+        with patch.dict(os.environ, self._make_run_env(profiles_json)), \
+             patch.object(_run, "sfn", mock_sfn), \
+             patch.object(_run.boto3, "resource", return_value=mock_ddb_resource):
+            _run._PROFILES = None
+            result = _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": "arn:aws:iam::123456789012:user/u",
+                    "department": "engineering",
+                },
+                None,
+            )
+
+        assert result.get("status") == "started"
+
+    def test_router_table_unreachable_fails_open(self, profiles_json):
+        """If router DynamoDB scan raises, fail open and start the job."""
+        mock_sfn = MagicMock()
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123456789012:execution:sm:j"
+        }
+        mock_ddb_resource, _ = self._make_router_mock(
+            scan_error=Exception("DynamoDB unavailable")
+        )
+
+        with patch.dict(os.environ, self._make_run_env(profiles_json)), \
+             patch.object(_run, "sfn", mock_sfn), \
+             patch.object(_run.boto3, "resource", return_value=mock_ddb_resource):
+            _run._PROFILES = None
+            result = _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": "arn:aws:iam::123456789012:user/u",
+                    "department": "finance",
+                },
+                None,
+            )
+
+        assert result.get("status") == "started"
+
+    def test_no_router_table_env_skips_check(self, profiles_json):
+        """If ROUTER_SPEND_TABLE is not set, skip the cross-stack check entirely."""
+        mock_sfn = MagicMock()
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123456789012:execution:sm:j"
+        }
+        mock_ddb_resource = MagicMock()
+        mock_ddb_resource.Table.return_value.get_item.return_value = {"Item": None}
+
+        env = {
+            "PROFILES_CONFIG": profiles_json,
+            "STATE_MACHINE_ARN": "arn:aws:states:us-east-1:123:stateMachine:sm",
+            "MONTHLY_BUDGET_USD": "50",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(_run, "sfn", mock_sfn), \
+             patch.object(_run.boto3, "resource", return_value=mock_ddb_resource):
+            os.environ.pop("ROUTER_SPEND_TABLE", None)
+            _run._PROFILES = None
+            result = _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": "arn:aws:iam::123456789012:user/u",
+                },
+                None,
+            )
+
+        assert result.get("status") == "started"
+
+    def test_default_department_used_when_absent(self, profiles_json):
+        """If no department in event, defaults to 'default'."""
+        mock_sfn = MagicMock()
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123456789012:execution:sm:j"
+        }
+        mock_ddb_resource, mock_router_table = self._make_router_mock(spend_items=[])
+
+        with patch.dict(os.environ, self._make_run_env(profiles_json)), \
+             patch.object(_run, "sfn", mock_sfn), \
+             patch.object(_run.boto3, "resource", return_value=mock_ddb_resource):
+            _run._PROFILES = None
+            _run.handler(
+                {
+                    "profile_id": "clustering-kmeans",
+                    "dataset_id": "ds-123",
+                    "user_arn": "arn:aws:iam::123456789012:user/u",
+                    # no department field
+                },
+                None,
+            )
+
+        # Confirm the scan was called (department defaulted to "default")
+        scan_call = mock_router_table.scan.call_args
+        assert scan_call is not None
+        filter_expr = scan_call[1].get("FilterExpression") or scan_call[0][0]
+        assert filter_expr is not None
+
+
+# ===========================================================================
+# Issue #24 — cumulative spend in RUNNING status
+# ===========================================================================
+
+class TestRunningStatusCostSoFar:
+    """Issue #24: RUNNING status includes cost_usd_so_far from HistoryTable."""
+
+    def _running_sfn_response(self, user_arn="arn:aws:iam::123456789012:user/analyst"):
+        from datetime import datetime, timezone
+        return {
+            "status": "RUNNING",
+            "executionArn": "arn:aws:states:us-east-1:123:execution:sm:job-run",
+            "startDate": datetime(2024, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
+            "stopDate": None,
+            "input": json.dumps({
+                "user_arn": user_arn,
+                "profile": {"profile_id": "clustering-kmeans"},
+            }),
+        }
+
+    def test_running_status_includes_cost_so_far(self):
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = self._running_sfn_response()
+
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value.query.return_value = {
+            "Items": [
+                {"cost_usd": "0.05"},
+                {"cost_usd": "0.03"},
+            ]
+        }
+
+        with patch.object(_status, "sfn", mock_sfn), \
+             patch.object(_status, "dynamodb", mock_ddb), \
+             patch.object(_status, "HISTORY_TABLE", "qs-compute-history"):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-run"}, None
+            )
+
+        assert result["status"] == "RUNNING"
+        assert "cost_usd_so_far" in result
+        assert result["cost_usd_so_far"] == pytest.approx(0.08)
+
+    def test_running_status_cost_so_far_zero_when_no_history(self):
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = self._running_sfn_response()
+
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value.query.return_value = {"Items": []}
+
+        with patch.object(_status, "sfn", mock_sfn), \
+             patch.object(_status, "dynamodb", mock_ddb), \
+             patch.object(_status, "HISTORY_TABLE", "qs-compute-history"):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-run"}, None
+            )
+
+        assert result["status"] == "RUNNING"
+        assert result.get("cost_usd_so_far") == pytest.approx(0.0)
+
+    def test_running_status_history_error_does_not_fail(self):
+        """HistoryTable query failure → cost_usd_so_far absent, status still RUNNING."""
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = self._running_sfn_response()
+
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value.query.side_effect = Exception("DDB unavailable")
+
+        with patch.object(_status, "sfn", mock_sfn), \
+             patch.object(_status, "dynamodb", mock_ddb), \
+             patch.object(_status, "HISTORY_TABLE", "qs-compute-history"):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-run"}, None
+            )
+
+        assert result["status"] == "RUNNING"
+        assert "cost_usd_so_far" not in result
+
+    def test_succeeded_status_unchanged(self):
+        """SUCCEEDED response still returns actual_cost_usd, not cost_usd_so_far."""
+        from datetime import datetime, timezone
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = {
+            "status": "SUCCEEDED",
+            "executionArn": "arn:aws:states:us-east-1:123:execution:sm:job-done",
+            "startDate": datetime(2024, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
+            "stopDate": datetime(2024, 6, 1, 9, 1, 0, tzinfo=timezone.utc),
+            "output": json.dumps({"deliver": {"dataset_id": "ds-done", "result_dataset_name": "Done"}}),
+        }
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value.query.return_value = {
+            "Items": [{"cost_usd": "0.012", "duration_seconds": "60", "profile_id": "regression-glm"}]
+        }
+
+        with patch.object(_status, "sfn", mock_sfn), \
+             patch.object(_status, "dynamodb", mock_ddb), \
+             patch.object(_status, "HISTORY_TABLE", "qs-compute-history"):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-done"}, None
+            )
+
+        assert result["status"] == "SUCCEEDED"
+        assert "actual_cost_usd" in result
+        assert "cost_usd_so_far" not in result

@@ -269,6 +269,48 @@ def _run_single(event: dict, profile_id: str, user_arn: str,
         # Fail open — Step Functions CheckBudget is the authoritative gate
         logger.warning(json.dumps({"budget_precheck_error": str(exc)}))
 
+    # Issue #23: Cross-stack router spend pre-check against qs-router-spend table.
+    # Reads the router's spend ledger for the request's department (current month).
+    # Blocked only when department spend + estimated cost exceeds the budget cap.
+    # Fails open on any AWS error — SFN CheckBudget remains the authoritative gate.
+    department = (event.get("department") or "default").strip() or "default"
+    router_spend_table_name = os.environ.get("ROUTER_SPEND_TABLE", "").strip()
+    if router_spend_table_name:
+        try:
+            from boto3.dynamodb.conditions import Attr
+            dynamodb_router = boto3.resource("dynamodb")
+            router_table = dynamodb_router.Table(router_spend_table_name)
+            month = datetime.now(timezone.utc).strftime("%Y-%m")
+            # Scan for records matching this department and current month (YYYY-MM prefix on date)
+            scan_resp = router_table.scan(
+                FilterExpression=(
+                    Attr("department").eq(department) & Attr("date").begins_with(month)
+                ),
+                ProjectionExpression="cost_usd",
+            )
+            router_dept_spend = sum(
+                float(item.get("cost_usd", 0)) for item in scan_resp.get("Items", [])
+            )
+            budget_limit = float(os.environ.get("MONTHLY_BUDGET_USD", "50"))
+            estimated_cost = float(profile.get("cost_estimate", {}).get("typical_cost_usd", 0))
+            if router_dept_spend + estimated_cost > budget_limit:
+                logger.info(json.dumps({
+                    "router_budget_blocked": True,
+                    "department": department,
+                    "router_dept_spend": router_dept_spend,
+                    "estimated_cost": estimated_cost,
+                    "cap_usd": budget_limit,
+                }))
+                return {
+                    "status": "budget_exceeded",
+                    "department": department,
+                    "cap_usd": budget_limit,
+                    "spent_usd": router_dept_spend,
+                }
+        except Exception as exc:
+            # Fail open — cross-stack spend table is advisory
+            logger.warning(json.dumps({"router_spend_check_error": str(exc)}))
+
     # Check concurrent job limit
     max_concurrent = int(os.environ.get("MAX_CONCURRENT_JOBS_PER_USER", "2"))
     sfn_arn = os.environ.get("STATE_MACHINE_ARN", "")
