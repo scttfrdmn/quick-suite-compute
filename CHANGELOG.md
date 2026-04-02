@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-02
+
+### Added
+- **Issue 19 — Named result snapshots:** optional `result_label` input in `compute_run`; `record-spend` SFN step writes to new `qs-compute-snapshots` DynamoDB table (PK: `user_arn`, SK: `label`) when label is set; unlabeled runs are not written; new `compute_snapshots` AgentCore tool Lambda lists a user's snapshots sorted by `completed_at` desc; CDK: new table, new Lambda, registered as AgentCore target
+- **Issue 20 — Compare two named snapshots:** new `compute_compare` AgentCore tool Lambda; inputs: `label_a`, `label_b`, `user_arn`; loads both result S3 paths, diffs row sets; returns `added_count`, `removed_count`, `unchanged_count`, `schema_diff`, `cost_delta_usd`, `duration_delta_seconds`; returns counts not full row data; handles schema mismatch gracefully
+- **Issue 21 — Profile composition:** optional `chain_profile_id` in `compute_run`; validated at submission time; forwarded as `chain_profile` in SFN execution input for downstream chaining; `compute_status` surfaces `step: "profile_2"` and `total_cost_usd` from execution output; chain estimated cost = sum of both profile estimates
+- **Issue 22 — Pre-submission cost estimate:** `compute_run` returns `estimated_cost_usd` and `estimated_duration_seconds` in the 200 response before SFN starts; estimate uses profile `cost_estimate` base + S3 `head_object` dataset size scaling (0.1x–10x relative to 10 MB baseline, clamped); fails open to profile-level estimate on S3 error; SFN starts regardless
+- 37 new unit tests covering all four v0.6.0 features
+
 ## [0.5.0] - 2026-04-02
 
 ### Added

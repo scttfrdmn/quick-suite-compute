@@ -114,6 +114,17 @@ def handler(event: dict, context) -> dict:
             deliver = output.get("deliver", {})
             result["result_dataset_id"] = deliver.get("dataset_id")
             result["result_dataset_name"] = deliver.get("result_dataset_name")
+
+            # Issue 21: surface chain step info if present
+            chain_step = output.get("chain_step")
+            if chain_step:
+                result["step"] = chain_step
+
+            # Issue 21: surface total cost across both steps
+            chain_spend = output.get("chain_spend")
+            if chain_spend:
+                result["total_cost_usd"] = float(chain_spend.get("total_cost_usd", 0))
+
         except (json.JSONDecodeError, AttributeError):
             pass
 
@@ -164,6 +175,18 @@ def handler(event: dict, context) -> dict:
             elapsed_running = (
                 datetime.now(timezone.utc) - started_at.astimezone(timezone.utc)
             ).total_seconds()
+
+        # Issue 21: try to surface chain step from execution input
+        try:
+            inp = json.loads(resp.get("input") or "{}")
+            if inp.get("chain_profile"):
+                # chain job — determine which step based on SFN output if available
+                partial_output = json.loads(resp.get("output") or "{}")
+                chain_step = partial_output.get("chain_step", "profile_1")
+                result["step"] = chain_step
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
         result["message"] = (
             f"Job is running ({elapsed_running:.0f}s elapsed). "
             "Check again in 15–30 seconds."

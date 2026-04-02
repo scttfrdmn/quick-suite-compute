@@ -10,13 +10,17 @@ ephemeral Lambda (or EMR Serverless for Spark), and delivers results back
 as a Quick Sight dataset. The analyst never sees an instance, a cluster,
 or a console.
 
-Three AgentCore Gateway Lambda targets:
+Seven AgentCore Gateway Lambda targets:
 
 | Tool | What It Does |
 |------|-------------|
 | `compute_profiles` | List available analysis types with inputs/outputs/cost |
 | `compute_run` | Match intent to profile, start execution, return job ID |
 | `compute_status` | Poll job progress; return results when done |
+| `compute_history` | List recent jobs for a user |
+| `compute_cancel` | Abort a running job |
+| `compute_snapshots` | List a user's named result snapshots (v0.6.0) |
+| `compute_compare` | Diff two named snapshots by row set (v0.6.0) |
 
 **Async execution model.** `compute_run` returns a job ID immediately.
 Quick Suite's agent calls `compute_status` to poll. Most Lambda-backed
@@ -356,11 +360,15 @@ quick-suite-compute/
 │   ├── compute-profiles/handler.py    # AgentCore target: list profiles
 │   ├── compute-run/handler.py         # AgentCore target: start job
 │   ├── compute-status/handler.py      # AgentCore target: poll job
+│   ├── compute-history/handler.py     # AgentCore target: list job history
+│   ├── compute-cancel/handler.py      # AgentCore target: cancel job
+│   ├── compute-snapshots/handler.py   # AgentCore target: list named snapshots (v0.6.0)
+│   ├── compute-compare/handler.py     # AgentCore target: diff two snapshots (v0.6.0)
 │   ├── check-budget/handler.py        # Step Functions step
 │   ├── extract/handler.py             # Step Functions: QS dataset → S3
 │   ├── runner/handler.py              # Step Functions: dispatches to profile
 │   ├── deliver/handler.py             # Step Functions: S3 → QS dataset
-│   ├── record-spend/handler.py        # Step Functions: update spend tracking
+│   ├── record-spend/handler.py        # Step Functions: update spend + write snapshot
 │   ├── handle-failure/handler.py      # Step Functions: error handling
 │   └── profiles/                      # Per-profile analysis code
 │       ├── clustering.py

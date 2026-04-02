@@ -9,6 +9,8 @@ Input (from Step Functions — full context):
     "user_arn": str,
     "profile": {"cost_estimate": {"typical_cost_usd": float}},
     "compute": {"actual_cost_usd": float},   # from runner (optional)
+    "result_label": str,                     # optional; if set, writes snapshot
+    "deliver": {"result_uri": str, "row_count": int},  # from deliver step
     ...
   }
 
@@ -123,5 +125,34 @@ def handler(event: dict, context) -> dict:
             })
         except Exception as exc:
             logger.warning(f"Failed to write history: {exc}")
+
+    # Write named snapshot if result_label is provided (Issue 19)
+    result_label = (event.get("result_label") or "").strip()
+    snapshots_table_name = os.environ.get("SNAPSHOTS_TABLE", "")
+    if result_label and snapshots_table_name:
+        try:
+            deliver_result = event.get("deliver") or {}
+            result_uri = deliver_result.get("result_uri", "")
+            row_count = int(deliver_result.get("row_count", 0))
+            completed_at = datetime.now(timezone.utc).isoformat()
+            snap = dynamodb.Table(snapshots_table_name)
+            snap.put_item(Item={
+                "user_arn": user_arn,
+                "label": result_label,
+                "completed_at": completed_at,
+                "job_id": execution_id,
+                "profile_id": profile_id,
+                "result_uri": result_uri,
+                "row_count": row_count,
+                "cost_usd": Decimal(str(cost)),
+                "duration_seconds": Decimal(str(duration_seconds)),
+            })
+            logger.info(json.dumps({
+                "snapshot_written": True,
+                "label": result_label,
+                "user_arn": user_arn,
+            }))
+        except Exception as exc:
+            logger.warning(f"Failed to write snapshot: {exc}")
 
     return {"recorded": True, "spend_usd": cost, "month": month}

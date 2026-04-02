@@ -6,12 +6,14 @@ remaining monthly compute budget, and starts a Step Functions execution.
 Returns a job_id immediately.
 
 Single-profile event args:
-  profile_id   (str, required)  Profile to run
-  dataset_id   (str, required)  Quick Sight dataset ID as input (or use source_uri)
-  user_arn     (str, required)  Caller ARN for budget tracking
-  parameters   (dict)           Profile-specific parameters
-  dataset_name (str)            Optional result dataset name
-  source_uri   (str)            Optional direct S3 URI (s3://bucket/key) or claws:// URI
+  profile_id      (str, required)  Profile to run
+  dataset_id      (str, required)  Quick Sight dataset ID as input (or use source_uri)
+  user_arn        (str, required)  Caller ARN for budget tracking
+  parameters      (dict)           Profile-specific parameters
+  dataset_name    (str)            Optional result dataset name
+  source_uri      (str)            Optional direct S3 URI (s3://bucket/key) or claws:// URI
+  result_label    (str)            Optional label for named snapshot (Issue 19)
+  chain_profile_id (str)           Optional second profile to run after first completes (Issue 21)
 
 Parallel-profile event args (supply profiles list instead of profile_id):
   profiles     (list[str])      List of profile_id values to run in parallel
@@ -20,7 +22,14 @@ Parallel-profile event args (supply profiles list instead of profile_id):
   parameters   (dict)           Shared profile parameters
 
 Returns (single):
-  {"status": "started", "job_id": str, "execution_arn": str, ...}
+  {
+    "status": "started",
+    "job_id": str,
+    "execution_arn": str,
+    "estimated_cost_usd": float,        # Issue 22: pre-submission estimate
+    "estimated_duration_seconds": float, # Issue 22: pre-submission estimate
+    ...
+  }
 Returns (parallel):
   {"status": "started", "count": int, "jobs": [{"job_id": str, "profile_id": str}, ...]}
 OR {"error": str}
@@ -34,6 +43,8 @@ import uuid
 from datetime import datetime, timezone
 
 import boto3
+
+_S3_BYTES_PER_ROW_ESTIMATE = 200  # rough estimate for cost scaling
 
 _ARN_RE = re.compile(
     r"^arn:aws:iam::\d{12}:(user|role|assumed-role)/[\w+=,.@/-]+$"
@@ -79,6 +90,38 @@ def _load_profiles() -> dict[str, dict]:
         raw = os.environ.get("PROFILES_CONFIG", "[]")
         _PROFILES = {p["profile_id"]: p for p in json.loads(raw)}
     return _PROFILES
+
+
+def _estimate_cost_from_dataset(profile: dict, source_uri: str) -> tuple[float, float]:
+    """
+    Return (estimated_cost_usd, estimated_duration_seconds) for Issue 22.
+    Uses profile cost_estimate as base. If source_uri is an S3 path, calls
+    head_object to get actual dataset size and scales the estimate proportionally
+    relative to a 10 MB typical baseline. Fails open — returns profile estimate on error.
+    """
+    base_cost = float(profile.get("cost_estimate", {}).get("typical_cost_usd", 0))
+    base_duration = float(profile.get("cost_estimate", {}).get("typical_duration_seconds", 30))
+
+    if not source_uri or not source_uri.startswith("s3://"):
+        return base_cost, base_duration
+
+    try:
+        without_scheme = source_uri[len("s3://"):]
+        bucket, _, key = without_scheme.partition("/")
+        if not bucket or not key:
+            return base_cost, base_duration
+        s3_client = boto3.client("s3")
+        head = s3_client.head_object(Bucket=bucket, Key=key)
+        size_bytes = head.get("ContentLength", 0)
+        if size_bytes <= 0:
+            return base_cost, base_duration
+        # Scale relative to 10 MB typical baseline (clamped to 0.1x–10x)
+        baseline_bytes = 10 * 1024 * 1024
+        scale = max(0.1, min(10.0, size_bytes / baseline_bytes))
+        return round(base_cost * scale, 6), round(base_duration * scale, 1)
+    except Exception as exc:
+        logger.warning(json.dumps({"cost_estimate_s3_error": str(exc)}))
+        return base_cost, base_duration
 
 
 def _validate_params(profile: dict, user_params: dict) -> list[str]:
@@ -245,9 +288,42 @@ def _run_single(event: dict, profile_id: str, user_arn: str,
             "validation_errors": errors,
         }
 
+    # Issue 21: validate chain_profile_id if provided
+    chain_profile_id = (event.get("chain_profile_id") or "").strip()
+    chain_profile = None
+    if chain_profile_id:
+        profiles = _load_profiles()
+        chain_profile = profiles.get(chain_profile_id)
+        if not chain_profile:
+            return {
+                "error": f"chain_profile_id '{chain_profile_id}' not found",
+                "available_profiles": sorted(profiles.keys()),
+            }
+        chain_enable_emr = os.environ.get("ENABLE_EMR", "false").lower() == "true"
+        if chain_profile.get("backend") == "emr_serverless" and not chain_enable_emr:
+            return {
+                "status": "requires_emr",
+                "profile_id": chain_profile_id,
+                "message": (
+                    f"chain_profile_id '{chain_profile['display_name']}' requires EMR Serverless, "
+                    "which is not enabled in this deployment."
+                ),
+            }
+
+    # Issue 22: compute pre-submission cost estimate using profile + dataset size
+    result_label = (event.get("result_label") or "").strip()
+    est_cost, est_duration = _estimate_cost_from_dataset(profile, source_uri)
+    if chain_profile:
+        chain_cost = float(chain_profile.get("cost_estimate", {}).get("typical_cost_usd", 0))
+        chain_dur = float(chain_profile.get("cost_estimate", {}).get("typical_duration_seconds", 30))
+        est_cost = round(est_cost + chain_cost, 6)
+        est_duration = round(est_duration + chain_dur, 1)
+
     job_id, execution_arn, err = _start_execution(
         profile, user_arn, dataset_id, source_uri,
         event.get("dataset_name"), event.get("parameters") or {},
+        result_label=result_label,
+        chain_profile=chain_profile,
     )
     if err:
         return {"error": err}
@@ -257,20 +333,28 @@ def _run_single(event: dict, profile_id: str, user_arn: str,
         "job_id": job_id,
         "execution_arn": execution_arn,
         "profile_id": profile_id,
+        "result_label": result_label or None,
+        "chain_profile_id": chain_profile_id or None,
     }))
 
-    return {
+    resp = {
         "status": "started",
         "job_id": job_id,
         "execution_arn": execution_arn,
         "profile_id": profile_id,
         "profile_display_name": profile["display_name"],
-        "estimated_cost_usd": profile.get("cost_estimate", {}).get("typical_cost_usd", 0),
+        "estimated_cost_usd": est_cost,
+        "estimated_duration_seconds": est_duration,
         "message": (
             f"Started {profile['display_name']} job. "
             f"Call compute_status with job_id='{job_id}' to check progress."
         ),
     }
+    if result_label:
+        resp["result_label"] = result_label
+    if chain_profile_id:
+        resp["chain_profile_id"] = chain_profile_id
+    return resp
 
 
 def _run_parallel(event: dict, user_arn: str, dataset_id: str, source_uri: str) -> dict:
@@ -317,7 +401,8 @@ def _run_parallel(event: dict, user_arn: str, dataset_id: str, source_uri: str) 
 
 
 def _start_execution(profile: dict, user_arn: str, dataset_id: str,
-                     source_uri: str, dataset_name, user_params: dict) -> tuple:
+                     source_uri: str, dataset_name, user_params: dict,
+                     result_label: str = "", chain_profile: dict | None = None) -> tuple:
     """Start a single Step Functions execution. Returns (job_id, execution_arn, error_str)."""
     execution_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -342,6 +427,14 @@ def _start_execution(profile: dict, user_arn: str, dataset_id: str,
         "enable_emr": os.environ.get("ENABLE_EMR", "false").lower() == "true",
         "started_at": timestamp,
     }
+
+    # Issue 19: pass result_label so record-spend can write to snapshots table
+    if result_label:
+        execution_input["result_label"] = result_label
+
+    # Issue 21: pass chain_profile so SFN workflow can run second profile
+    if chain_profile:
+        execution_input["chain_profile"] = chain_profile
 
     state_machine_arn = os.environ["STATE_MACHINE_ARN"]
     execution_name = f"job-{execution_id[:8]}-{timestamp[:10].replace('-', '')}"

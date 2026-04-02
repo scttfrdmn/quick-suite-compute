@@ -136,6 +136,23 @@ class ComputeStack(Stack):
         )
 
         # -----------------------------------------------------------------
+        # DynamoDB: Named Result Snapshots (Issue 19)
+        # -----------------------------------------------------------------
+        snapshots_table = dynamodb.Table(
+            self,
+            "SnapshotsTable",
+            table_name=f"{prefix}-snapshots",
+            partition_key=dynamodb.Attribute(
+                name="user_arn", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="label", type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        # -----------------------------------------------------------------
         # DynamoDB: Job History
         # -----------------------------------------------------------------
         history_table = dynamodb.Table(
@@ -293,6 +310,7 @@ class ComputeStack(Stack):
             "COMPUTE_BUCKET": compute_bucket.bucket_name,
             "SPEND_TABLE": spend_table.table_name,
             "HISTORY_TABLE": history_table.table_name,
+            "SNAPSHOTS_TABLE": snapshots_table.table_name,
             "NOTIFICATION_TOPIC_ARN": notification_topic.topic_arn,
             "QUICKSIGHT_ACCOUNT_ID": account_id,
             "QUICKSIGHT_REGION": qs_region,
@@ -414,6 +432,7 @@ class ComputeStack(Stack):
         )
         spend_table.grant_write_data(record_spend_fn)
         history_table.grant_write_data(record_spend_fn)
+        snapshots_table.grant_write_data(record_spend_fn)
         record_spend_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["cloudwatch:PutMetricData"],
@@ -843,11 +862,56 @@ class ComputeStack(Stack):
         )
 
         # -----------------------------------------------------------------
+        # Lambda: Compute Snapshots (AgentCore tool: compute_snapshots) — Issue 19
+        # -----------------------------------------------------------------
+        snapshots_fn = lambda_.Function(
+            self,
+            "ComputeSnapshots",
+            function_name=f"{prefix}-compute-snapshots",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambdas/compute-snapshots"),
+            timeout=Duration.seconds(10),
+            memory_size=128,
+            role=tool_role,
+            environment={
+                **common_env,
+            },
+        )
+        snapshots_table.grant_read_data(snapshots_fn)
+
+        # -----------------------------------------------------------------
+        # Lambda: Compute Compare (AgentCore tool: compute_compare) — Issue 20
+        # -----------------------------------------------------------------
+        compare_fn = lambda_.Function(
+            self,
+            "ComputeCompare",
+            function_name=f"{prefix}-compute-compare",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambdas/compute-compare"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            role=tool_role,
+            environment={
+                **common_env,
+            },
+        )
+        snapshots_table.grant_read_data(compare_fn)
+        compare_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=["arn:aws:s3:::*"],
+            )
+        )
+
+        # -----------------------------------------------------------------
         # AgentCore Gateway invoke permissions
         # -----------------------------------------------------------------
         gateway_role_arn = self.node.try_get_context("agentcore_gateway_role_arn")
         if gateway_role_arn:
-            for fn in [profiles_fn, run_fn, status_fn, history_fn, cancel_fn]:
+            for fn in [profiles_fn, run_fn, status_fn, history_fn, cancel_fn,
+                       snapshots_fn, compare_fn]:
                 fn.add_permission(
                     "AgentCoreInvoke",
                     principal=iam.ArnPrincipal(gateway_role_arn),
@@ -863,6 +927,8 @@ class ComputeStack(Stack):
             "compute_status": status_fn.function_arn,
             "compute_history": history_fn.function_arn,
             "compute_cancel": cancel_fn.function_arn,
+            "compute_snapshots": snapshots_fn.function_arn,
+            "compute_compare": compare_fn.function_arn,
         }
 
         for tool_name, arn_value in tool_arns.items():
@@ -1000,6 +1066,7 @@ class ComputeStack(Stack):
         CfnOutput(self, "ComputeBucketName", value=compute_bucket.bucket_name)
         CfnOutput(self, "SpendTableName", value=spend_table.table_name)
         CfnOutput(self, "HistoryTableName", value=history_table.table_name)
+        CfnOutput(self, "SnapshotsTableName", value=snapshots_table.table_name)
         CfnOutput(self, "StateMachineArn", value=state_machine.state_machine_arn)
         CfnOutput(self, "NotificationTopicArn", value=notification_topic.topic_arn)
         CfnOutput(
