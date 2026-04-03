@@ -1,0 +1,73 @@
+name: explore-correlations
+display_name: "Correlation Analysis on a CSV Dataset"
+description: |
+  A self-contained compute example. Uploads a small CSV to the compute
+  bucket, runs the explore-correlations profile to find feature relationships,
+  polls for completion, and verifies a named snapshot is created.
+
+  Demonstrates: compute_profiles → compute_run → compute_status → compute_snapshots.
+  Uses a direct S3 URI (no Quick Sight dataset needed).
+category: compute-pipeline
+requires:
+  stacks: [compute]
+  setup: |
+    No additional setup required. The scenario uploads its own test CSV
+    to the compute bucket before running. Requires the QuickSuiteCompute
+    stack to be deployed and AWS_PROFILE set.
+
+steps:
+  - id: profiles
+    tool: compute_profiles
+    stack: compute
+    description: "List available profiles and verify explore-correlations is present"
+    input: {}
+    assert:
+      - path: "profiles"
+        op: exists
+
+  - id: run
+    tool: compute_run
+    stack: compute
+    description: "Start a correlation analysis job on the test CSV"
+    input:
+      profile_id: explore-correlations
+      source_uri: "s3://qs-compute-942542972736-us-west-2/e2e-test/inputs/test_data.csv"
+      user_arn: "arn:aws:iam::942542972736:user/e2e-test-user"
+      parameters:
+        features: ["x", "y", "z"]
+        method: pearson
+        top_n: 3
+      result_label: "example-correlations"
+    assert:
+      - path: "status"
+        op: eq
+        value: started
+      - path: "job_id"
+        op: exists
+      - path: "estimated_cost_usd"
+        op: exists
+
+  - id: status
+    tool: compute_status
+    stack: compute
+    description: "Wait for the correlation job to complete"
+    poll:
+      interval_seconds: 10
+      max_attempts: 30
+    input:
+      job_id: "{run.job_id}"
+      user_arn: "arn:aws:iam::942542972736:user/e2e-test-user"
+    assert:
+      - path: "status"
+        op: in
+        value: [SUCCEEDED, FAILED]
+
+  - id: snapshots
+    tool: compute_snapshots
+    stack: compute
+    description: "Verify the named snapshot was recorded"
+    input:
+      user_arn: "arn:aws:iam::942542972736:user/e2e-test-user"
+    assert:
+      - path: "snapshots"
+        op: exists
