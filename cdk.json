@@ -19,6 +19,7 @@
     "@aws-cdk/aws-s3:createDefaultLoggingPolicy": false,
     "enable_emr": false,
     "monthly_budget_usd": 50,
-    "notification_email": ""
+    "notification_email": "",
+    "claws_resolver_arn": "arn:aws:lambda:us-west-2:942542972736:function:qs-open-data-claws-resolver"
   }
 }
