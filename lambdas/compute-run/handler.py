@@ -87,8 +87,16 @@ def _check_concurrent_limit(user_arn: str, state_machine_arn: str, limit: int) -
 def _load_profiles() -> dict[str, dict]:
     global _PROFILES
     if _PROFILES is None:
-        raw = os.environ.get("PROFILES_CONFIG", "[]")
-        _PROFILES = {p["profile_id"]: p for p in json.loads(raw)}
+        s3_uri = os.environ.get("PROFILES_S3_URI")
+        if s3_uri:
+            import boto3
+            s3 = boto3.client("s3")
+            bucket, key = s3_uri[len("s3://"):].split("/", 1)
+            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+            _PROFILES = {p["profile_id"]: p for p in json.loads(body)}
+        else:
+            raw = os.environ.get("PROFILES_CONFIG", "[]")
+            _PROFILES = {p["profile_id"]: p for p in json.loads(raw)}
     return _PROFILES
 
 

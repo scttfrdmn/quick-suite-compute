@@ -32,4 +32,5 @@ ignore = ["E501"]
 testpaths = ["tests"]
 markers = [
     "integration: requires Substrate running (auto-started from ~/src/substrate)",
+    "e2e: requires deployed QuickSuiteCompute stack and AWS credentials",
 ]

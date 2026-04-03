@@ -30,8 +30,16 @@ _PROFILES: list[dict] | None = None
 def _load_profiles() -> list[dict]:
     global _PROFILES
     if _PROFILES is None:
-        raw = os.environ.get("PROFILES_CONFIG", "[]")
-        _PROFILES = json.loads(raw)
+        s3_uri = os.environ.get("PROFILES_S3_URI")
+        if s3_uri:
+            import boto3
+            s3 = boto3.client("s3")
+            bucket, key = s3_uri[len("s3://"):].split("/", 1)
+            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+            _PROFILES = json.loads(body)
+        else:
+            raw = os.environ.get("PROFILES_CONFIG", "[]")
+            _PROFILES = json.loads(raw)
     return _PROFILES
 
 

@@ -43,7 +43,7 @@ class TestComputeStackSynthesis:
         template.resource_count_is("AWS::S3::Bucket", 1)
 
     def test_dynamodb_tables_created(self, template):
-        template.resource_count_is("AWS::DynamoDB::Table", 2)
+        template.resource_count_is("AWS::DynamoDB::Table", 3)
 
     def test_sns_topic_created(self, template):
         template.resource_count_is("AWS::SNS::Topic", 1)
@@ -112,7 +112,7 @@ class TestComputeStackSynthesis:
         lambdas = tpl.find_resources("AWS::Lambda::Function")
         run_lambdas = {
             k: v for k, v in lambdas.items()
-            if "compute-run" in json.dumps(v.get("Properties", {}).get("FunctionName", ""))
+            if "qs-compute-compute-run" in json.dumps(v.get("Properties", {}).get("FunctionName", ""))
         }
         assert len(run_lambdas) >= 1
         run_env_vars = list(run_lambdas.values())[0]["Properties"]["Environment"]["Variables"]

@@ -29,6 +29,7 @@ from pathlib import Path
 from aws_cdk import (
     CfnOutput,
     Duration,
+    Fn,
     RemovalPolicy,
     Stack,
 )
@@ -263,26 +264,8 @@ class ComputeStack(Stack):
                 sns_subscriptions.EmailSubscription(notification_email)
             )
 
-        # -----------------------------------------------------------------
-        # Lambda Layer: Heavy Analytics Dependencies (Docker bundled)
-        # -----------------------------------------------------------------
-        analytics_layer = lambda_.LayerVersion(
-            self,
-            "AnalyticsLayer",
-            code=lambda_.Code.from_docker_build(
-                path="lambdas/layer",
-                build_args={},
-            ),
-            compatible_runtimes=[lambda_.Runtime.PYTHON_3_12],
-            description=(
-                "scikit-learn, pandas, statsmodels, prophet, lifelines, "
-                "scipy, pyarrow for Quick Suite Compute runner profiles"
-            ),
-        )
-
         # Lambda Layer: Profile modules (clustering, regression, forecast, etc.)
-        # Runner dispatches via importlib.import_module(profile.entrypoint.split(".")[0])
-        # so these modules must be on sys.path via a Layer.
+        # Used by non-runner Lambdas if needed. Runner uses container image.
         profiles_layer = lambda_.LayerVersion(
             self,
             "ProfilesLayer",
@@ -306,6 +289,7 @@ class ComputeStack(Stack):
             ],
         )
         spend_table.grant_read_write_data(tool_role)
+        compute_bucket.grant_read(tool_role)   # for reading profiles.json
 
         # -----------------------------------------------------------------
         # IAM Role 2: Runner Lambda (inside Step Functions)
@@ -389,6 +373,18 @@ class ComputeStack(Stack):
             "ENABLE_EMR": "true" if enable_emr else "false",
         }
 
+        # Upload profiles JSON to S3 — full profile data exceeds Lambda 4KB env-var limit.
+        # Tool Lambdas read via PROFILES_S3_URI at first invocation.
+        s3deploy.BucketDeployment(
+            self,
+            "ProfilesConfigDeployment",
+            sources=[s3deploy.Source.data("profiles.json", profiles_config_json)],
+            destination_bucket=compute_bucket,
+            destination_key_prefix="config",
+            prune=False,
+        )
+        profiles_s3_uri = f"s3://{compute_bucket.bucket_name}/config/profiles.json"
+
         # Issue #26: VPC kwargs applied to all SFN Lambda steps when enable_vpc=true
         _vpc_kwargs = {}
         if enable_vpc and vpc is not None:
@@ -462,15 +458,18 @@ class ComputeStack(Stack):
 
         # -----------------------------------------------------------------
         # Lambda: Runner (Step Functions step: dispatches to profile modules)
+        # Container image bundles analytics deps (scikit-learn etc.) + profiles/
+        # because the combined unzipped size exceeds the 250 MB Lambda layer limit.
+        # Build context is lambdas/; Dockerfile at lambdas/runner/Dockerfile.
         # -----------------------------------------------------------------
-        runner_fn = lambda_.Function(
+        runner_fn = lambda_.DockerImageFunction(
             self,
             "Runner",
             function_name=f"{prefix}-runner",
-            runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="handler.handler",
-            code=lambda_.Code.from_asset("lambdas/runner"),
-            layers=[analytics_layer, profiles_layer],
+            code=lambda_.DockerImageCode.from_image_asset(
+                "lambdas",
+                file="runner/Dockerfile",
+            ),
             timeout=Duration.minutes(15),
             memory_size=3008,
             role=runner_role,
@@ -894,7 +893,7 @@ class ComputeStack(Stack):
             role=tool_role,
             environment={
                 **common_env,
-                "PROFILES_CONFIG": profiles_config_json,
+                "PROFILES_S3_URI": profiles_s3_uri,
             },
         )
 
@@ -903,7 +902,7 @@ class ComputeStack(Stack):
         # -----------------------------------------------------------------
         run_env = {
             **common_env,
-            "PROFILES_CONFIG": profiles_config_json,
+            "PROFILES_S3_URI": profiles_s3_uri,
             "STATE_MACHINE_ARN": state_machine.state_machine_arn,
             "MAX_CONCURRENT_JOBS_PER_USER": str(self.node.try_get_context("max_concurrent_jobs_per_user") or "2"),
         }
@@ -965,9 +964,17 @@ class ComputeStack(Stack):
         status_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:DescribeExecution", "states:GetExecutionHistory"],
-                resources=[state_machine.state_machine_arn.replace(
-                    "stateMachine", "execution"
-                ) + ":*"],
+                resources=[
+                    Fn.join(":", [
+                        "arn",
+                        Stack.of(self).partition,
+                        "states",
+                        Stack.of(self).region,
+                        Stack.of(self).account,
+                        "execution",
+                        state_machine.state_machine_name + ":*",
+                    ])
+                ],
             )
         )
         history_table.grant_read_data(status_fn)
@@ -1012,9 +1019,17 @@ class ComputeStack(Stack):
         cancel_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:StopExecution"],
-                resources=[state_machine.state_machine_arn.replace(
-                    "stateMachine", "execution"
-                ) + ":*"],
+                resources=[
+                    Fn.join(":", [
+                        "arn",
+                        Stack.of(self).partition,
+                        "states",
+                        Stack.of(self).region,
+                        Stack.of(self).account,
+                        "execution",
+                        state_machine.state_machine_name + ":*",
+                    ])
+                ],
             )
         )
 
