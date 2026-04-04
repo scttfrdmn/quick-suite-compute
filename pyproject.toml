@@ -18,6 +18,22 @@ dev = [
     "boto3>=1.26",
     "pandas>=2.0",
     "pyarrow>=14",
+    # profile handler runtime deps (mirror lambdas/runner/Dockerfile)
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "scikit-learn>=1.4",
+    "statsmodels>=0.14",
+    "prophet>=1.1",
+    "lifelines>=0.27",
+    "vaderSentiment>=3.3",
+    "ruptures>=1.1",
+    "shapely>=2.0",
+    "networkx>=3.4",
+    "python-louvain>=0.16",
+    "xarray>=2024.10",
+    "netCDF4>=1.7",
+    "pypdf>=5.1",
+    "RestrictedPython>=8.0",
 ]
 
 [tool.ruff]
