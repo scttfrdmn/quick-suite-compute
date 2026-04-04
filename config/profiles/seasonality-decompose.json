@@ -1,0 +1,55 @@
+{
+  "profile_id": "seasonality-decompose",
+  "display_name": "Seasonality Decomposition",
+  "description": "Separates a time series into trend, seasonal, and residual components using STL (Seasonal-Trend decomposition using Loess). STL is robust to outliers and works well for monthly, quarterly, or weekly institutional data. Use before forecasting to understand data structure, or to isolate the underlying trend from seasonal enrollment fluctuations. Optionally decomposes multiple series in one job via group_column.",
+  "category": "time-series",
+  "backend": "lambda",
+  "entrypoint": "time_series.decompose_handler",
+  "parameters": {
+    "date_column": {
+      "type": "column",
+      "description": "Date or timestamp column"
+    },
+    "value_column": {
+      "type": "column",
+      "description": "Numeric time series column to decompose"
+    },
+    "group_column": {
+      "type": "column",
+      "description": "Optional column to decompose each group independently (e.g. campus, department)"
+    },
+    "period": {
+      "type": "integer",
+      "default": null,
+      "min": 2,
+      "max": 365,
+      "description": "Seasonal period in observations (default: auto-detected from date spacing — 12 for monthly, 4 for quarterly, etc.)"
+    },
+    "model": {
+      "type": "enum",
+      "values": ["additive", "multiplicative"],
+      "default": "additive",
+      "description": "Decomposition model: additive (trend + seasonal + residual) or multiplicative (trend × seasonal × residual)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 8,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["date_column", "value_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "trend", "type": "float"},
+      {"name": "seasonal", "type": "float"},
+      {"name": "residual", "type": "float"}
+    ],
+    "extra_tables": []
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 10,
+    "typical_cost_usd": 0.0005
+  },
+  "tags": ["time-series", "decomposition", "seasonality", "trend", "enrollment", "forecasting", "pre-processing"]
+}

@@ -1,0 +1,42 @@
+{
+  "profile_id": "text-sentiment",
+  "display_name": "Text Sentiment Analysis",
+  "description": "Scores each text record as positive, negative, or neutral using VADER (Valence Aware Dictionary and sEntiment Reasoner). Lexicon-based — no model download, no API call, fast and explainable. Well-suited for short social and survey text: course evaluations, support tickets, open-ended responses, alumni comments. Returns a sentiment label and compound score (-1 to +1) per record.",
+  "category": "text",
+  "backend": "lambda",
+  "entrypoint": "text_analytics.sentiment_handler",
+  "parameters": {
+    "text_column": {
+      "type": "column",
+      "description": "Column containing the text to score"
+    },
+    "output_scores": {
+      "type": "boolean",
+      "default": false,
+      "description": "Also output raw pos/neg/neu/compound scores per record (default false)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 1,
+    "max_rows": 500000,
+    "required_column_types": ["string"],
+    "column_parameters": ["text_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "sentiment", "type": "string"},
+      {"name": "sentiment_score", "type": "float"},
+      {"name": "pos_score", "type": "float"},
+      {"name": "neg_score", "type": "float"},
+      {"name": "neu_score", "type": "float"},
+      {"name": "compound_score", "type": "float"}
+    ],
+    "extra_tables": ["sentiment_summary"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 15,
+    "typical_cost_usd": 0.0005
+  },
+  "tags": ["text", "nlp", "sentiment", "survey", "course-evaluation", "feedback", "qualitative", "higher-ed"]
+}

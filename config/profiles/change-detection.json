@@ -1,0 +1,59 @@
+{
+  "profile_id": "change-detection",
+  "display_name": "Change Point Detection",
+  "description": "Detects structural breaks (change points) in a time series using the PELT algorithm — a computationally efficient exact method that finds the optimal number and location of breaks. Use to identify when enrollment started declining, when grant spending deviated from budget, or when course evaluation scores shifted after a curriculum change. Optionally runs per-group for multiple series in one job.",
+  "category": "time-series",
+  "backend": "lambda",
+  "entrypoint": "time_series.change_detection_handler",
+  "parameters": {
+    "date_column": {
+      "type": "column",
+      "description": "Date or timestamp column"
+    },
+    "value_column": {
+      "type": "column",
+      "description": "Numeric time series column to analyze"
+    },
+    "group_column": {
+      "type": "column",
+      "description": "Optional column to run detection independently per group (e.g. department, campus)"
+    },
+    "min_segment_length": {
+      "type": "integer",
+      "default": 3,
+      "min": 2,
+      "max": 50,
+      "description": "Minimum number of observations between change points (default 3)"
+    },
+    "model": {
+      "type": "enum",
+      "values": ["rbf", "l2", "l1"],
+      "default": "rbf",
+      "description": "Cost function: rbf (non-linear, robust), l2 (mean shift), l1 (median shift)"
+    },
+    "penalty": {
+      "type": "float",
+      "default": null,
+      "description": "Penalty for adding a change point (default: auto BIC). Higher = fewer breaks."
+    }
+  },
+  "input_requirements": {
+    "min_rows": 6,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["date_column", "value_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "change_point", "type": "boolean"},
+      {"name": "segment_id", "type": "integer"}
+    ],
+    "extra_tables": ["change_points"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 15,
+    "typical_cost_usd": 0.0005
+  },
+  "tags": ["time-series", "change-detection", "structural-break", "enrollment", "retention", "finance", "trend"]
+}

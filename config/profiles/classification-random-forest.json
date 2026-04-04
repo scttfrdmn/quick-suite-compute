@@ -1,0 +1,71 @@
+{
+  "profile_id": "classification-random-forest",
+  "display_name": "Random Forest (Classification / Regression)",
+  "description": "Ensemble tree model for classification (binary or multiclass) or regression. Auto-detects task from the target column: categorical or low-cardinality integer targets → classifier; continuous targets → regressor. Returns predictions, class probabilities, and ranked feature importances. More robust than logistic regression for non-linear relationships and mixed feature types. Use for dropout risk scoring, donor lapse prediction, fraud detection, or any outcome with complex feature interactions.",
+  "category": "prediction",
+  "backend": "lambda",
+  "entrypoint": "ml.random_forest_handler",
+  "parameters": {
+    "target": {
+      "type": "column",
+      "description": "Outcome column to predict"
+    },
+    "features": {
+      "type": "column_list",
+      "min_columns": 1,
+      "description": "Predictor columns (numeric)"
+    },
+    "n_estimators": {
+      "type": "integer",
+      "default": 100,
+      "min": 10,
+      "max": 500,
+      "description": "Number of trees in the forest (default 100)"
+    },
+    "max_depth": {
+      "type": "integer",
+      "default": null,
+      "min": 1,
+      "max": 50,
+      "description": "Maximum tree depth (default: unlimited)"
+    },
+    "class_weight": {
+      "type": "enum",
+      "values": ["balanced", "none"],
+      "default": "balanced",
+      "description": "Set to balanced when positive class is rare (default: balanced)"
+    },
+    "test_size": {
+      "type": "float",
+      "default": 0.2,
+      "min": 0.1,
+      "max": 0.4,
+      "description": "Fraction held out for evaluation (default 0.2)"
+    },
+    "task": {
+      "type": "enum",
+      "values": ["classify", "regress"],
+      "default": null,
+      "description": "Override task auto-detection (default: auto-detect from target column type)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 20,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["features", "target"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "predicted_class", "type": "string"},
+      {"name": "predicted_prob_{class}", "type": "float"}
+    ],
+    "extra_tables": ["feature_importances", "classification_report"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 30,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["ml", "classification", "regression", "random-forest", "prediction", "risk", "dropout", "fraud", "yield", "higher-ed"]
+}

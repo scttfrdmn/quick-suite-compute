@@ -1,0 +1,45 @@
+{
+  "profile_id": "chi-square",
+  "display_name": "Chi-Square Test of Independence",
+  "description": "Tests whether two categorical variables are associated using the chi-square statistic. Returns observed and expected contingency tables, chi-square statistic, p-value, and Cramér's V effect size. Use to test association between Pell status and retention, major and career outcome, or any two categorical variables.",
+  "category": "statistics",
+  "backend": "lambda",
+  "entrypoint": "statistics.chi_square_handler",
+  "parameters": {
+    "row_column": {
+      "type": "column",
+      "description": "First categorical variable (rows of contingency table)"
+    },
+    "col_column": {
+      "type": "column",
+      "description": "Second categorical variable (columns of contingency table)"
+    },
+    "weight_column": {
+      "type": "column",
+      "description": "Optional numeric weight column (for pre-aggregated data)"
+    },
+    "alpha": {
+      "type": "float",
+      "default": 0.05,
+      "min": 0.001,
+      "max": 0.2,
+      "description": "Significance level (default 0.05)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 5,
+    "max_rows": 500000,
+    "required_column_types": ["categorical"],
+    "column_parameters": ["row_column", "col_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [],
+    "extra_tables": ["observed_contingency", "expected_contingency", "test_statistics"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 5,
+    "typical_cost_usd": 0.0003
+  },
+  "tags": ["statistics", "chi-square", "categorical", "association", "hypothesis-test", "pell", "retention", "equity", "accreditation"]
+}

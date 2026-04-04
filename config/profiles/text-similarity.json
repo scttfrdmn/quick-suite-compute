@@ -1,0 +1,45 @@
+{
+  "profile_id": "text-similarity",
+  "display_name": "Text Similarity and Near-Duplicate Detection",
+  "description": "Identifies near-duplicate or highly similar text records using TF-IDF cosine similarity. Groups records above the similarity threshold into connected components and designates a canonical representative for each group. Use to deduplicate survey responses before topic modeling, find similar grant abstracts, or cluster support tickets by topic without manual labeling.",
+  "category": "text",
+  "backend": "lambda",
+  "entrypoint": "text_analytics.similarity_handler",
+  "parameters": {
+    "text_column": {
+      "type": "column",
+      "description": "Column containing the text to compare"
+    },
+    "id_column": {
+      "type": "column",
+      "description": "Column with a unique record identifier (used in canonical_id output)"
+    },
+    "similarity_threshold": {
+      "type": "float",
+      "default": 0.85,
+      "min": 0.5,
+      "max": 1.0,
+      "description": "Cosine similarity threshold for grouping (default 0.85; lower = more grouping)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 2,
+    "max_rows": 50000,
+    "required_column_types": ["string"],
+    "column_parameters": ["text_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "similarity_group_id", "type": "integer"},
+      {"name": "is_near_duplicate", "type": "boolean"},
+      {"name": "canonical_id", "type": "string"}
+    ],
+    "extra_tables": ["group_summary"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 45,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["text", "nlp", "similarity", "deduplication", "clustering", "survey", "grants", "qualitative"]
+}

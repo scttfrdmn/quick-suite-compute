@@ -1,0 +1,58 @@
+{
+  "profile_id": "regression-logistic",
+  "display_name": "Logistic Regression",
+  "description": "Binary outcome classifier using scikit-learn LogisticRegression. Returns predicted probability and class for each record, plus AUC, confusion matrix, and feature coefficients ranked by importance. Use when you need a clean binary prediction (enrolled/not, retained/not, donated/not) with interpretable feature weights.",
+  "category": "prediction",
+  "backend": "lambda",
+  "entrypoint": "statistics.logistic_handler",
+  "parameters": {
+    "target": {
+      "type": "column",
+      "description": "Binary outcome column to predict (must have exactly 2 unique values)"
+    },
+    "features": {
+      "type": "column_list",
+      "min_columns": 1,
+      "description": "Predictor columns (numeric)"
+    },
+    "threshold": {
+      "type": "float",
+      "default": 0.5,
+      "min": 0.01,
+      "max": 0.99,
+      "description": "Classification threshold for predicted_class (default 0.5)"
+    },
+    "class_weight": {
+      "type": "enum",
+      "values": ["balanced", "none"],
+      "default": "balanced",
+      "description": "Set to balanced when positive class is rare (default: balanced)"
+    },
+    "test_size": {
+      "type": "float",
+      "default": 0.2,
+      "min": 0.1,
+      "max": 0.4,
+      "description": "Fraction of data held out for evaluation metrics (default 0.2)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 20,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["features", "target"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "predicted_prob", "type": "float"},
+      {"name": "predicted_class", "type": "integer"}
+    ],
+    "extra_tables": ["confusion_matrix", "coefficients"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 20,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["regression", "classification", "prediction", "binary", "retention", "enrollment", "fundraising", "risk"]
+}

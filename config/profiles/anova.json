@@ -1,0 +1,41 @@
+{
+  "profile_id": "anova",
+  "display_name": "ANOVA (Analysis of Variance)",
+  "description": "One-way ANOVA to test whether a numeric outcome differs significantly across groups, with Tukey HSD post-hoc pairwise comparisons and eta-squared effect size. Use to compare test scores across course sections, salary equity across departments, or satisfaction ratings across demographic groups.",
+  "category": "statistics",
+  "backend": "lambda",
+  "entrypoint": "statistics.anova_handler",
+  "parameters": {
+    "metric_column": {
+      "type": "column",
+      "description": "Numeric outcome column to compare across groups"
+    },
+    "group_column": {
+      "type": "column",
+      "description": "Categorical column defining the groups (e.g. department, section, cohort)"
+    },
+    "alpha": {
+      "type": "float",
+      "default": 0.05,
+      "min": 0.001,
+      "max": 0.2,
+      "description": "Significance level for hypothesis tests (default 0.05)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 10,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["metric_column", "group_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [],
+    "extra_tables": ["group_summary", "tukey_hsd", "anova_table"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 10,
+    "typical_cost_usd": 0.0005
+  },
+  "tags": ["statistics", "anova", "hypothesis-test", "group-comparison", "equity", "salary", "test-scores", "accreditation"]
+}
