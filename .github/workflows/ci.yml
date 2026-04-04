@@ -65,15 +65,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: "stable"
 
       - name: Build Substrate
         run: |
-          git clone https://github.com/scttfrdmn/substrate.git ~/substrate
-          cd ~/substrate && make build
-
-      - name: Start Substrate
-        run: ~/substrate/bin/substrate server &
+          git clone https://github.com/scttfrdmn/substrate.git ~/src/substrate
+          cd ~/src/substrate && make build
 
       - name: Run integration tests
         run: uv run pytest -m integration tests/ -v
