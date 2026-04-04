@@ -6,7 +6,8 @@ compute_cancel is tested by cancelling the shared job from run_result.
 """
 
 import pytest
-from tests.e2e.conftest import invoke, _E2E_USER_ARN
+
+from tests.e2e.conftest import _E2E_USER_ARN, invoke
 
 pytestmark = pytest.mark.e2e
 
@@ -37,7 +38,7 @@ class TestComputeCancelE2E:
     def test_cancel_running_job(self, lam, tool_arns, run_result, sfn_client):
         """compute_cancel stops the running job."""
         job_id = run_result["job_id"]
-        exec_arn = run_result.get("execution_arn", "")
+        _exec_arn = run_result.get("execution_arn", "")
 
         # Check current status first — skip if already terminal
         status_result = invoke(lam, tool_arns["compute_status"], {"job_id": job_id})

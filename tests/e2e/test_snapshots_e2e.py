@@ -7,7 +7,8 @@ a completed job.
 """
 
 import pytest
-from tests.e2e.conftest import invoke, _E2E_USER_ARN
+
+from tests.e2e.conftest import _E2E_USER_ARN, invoke
 
 pytestmark = pytest.mark.e2e
 

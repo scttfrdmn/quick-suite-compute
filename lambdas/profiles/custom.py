@@ -21,7 +21,6 @@ import os
 import signal
 import time
 import uuid
-from io import BytesIO
 from typing import Any
 
 import pandas as pd
@@ -60,16 +59,16 @@ def _build_safe_globals() -> dict:
     stable symbols that exist across both major versions.
     """
     import builtins
-    from RestrictedPython import safe_globals, safe_builtins
-    from RestrictedPython.Guards import (
-        guarded_setattr,
-        guarded_delattr,
-        guarded_unpack_sequence,
-        safer_getattr,
-    )
 
     import numpy as np
     import pandas as pd
+    from RestrictedPython import safe_builtins, safe_globals
+    from RestrictedPython.Guards import (
+        guarded_delattr,
+        guarded_setattr,
+        guarded_unpack_sequence,
+        safer_getattr,
+    )
 
     glb = dict(safe_globals)
     glb["__builtins__"] = dict(safe_builtins)

@@ -1352,8 +1352,8 @@ class TestCustomGeneratedHandler:
         self.handler = custom_generated_handler
 
     def _make_mock_lambda_client(self, generated_code: str):
-        from unittest.mock import MagicMock
         import json as _json
+        from unittest.mock import MagicMock
 
         lambda_client = MagicMock()
         payload_bytes = _json.dumps({"content": generated_code}).encode()

@@ -288,7 +288,7 @@ class TestRecordSpendSnapshot:
         mock_ddb = MagicMock()
         with patch.dict(os.environ, {"SNAPSHOTS_TABLE": ""}), \
              patch.object(_record, "dynamodb", mock_ddb):
-            result = _record.handler(
+            _result = _record.handler(
                 {
                     "user_arn": "arn:aws:iam::123:user/u",
                     "profile": {"cost_estimate": {"typical_cost_usd": 0.01}},

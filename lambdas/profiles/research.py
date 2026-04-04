@@ -168,8 +168,8 @@ def coauthor_network_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> tu
     Returns a new DataFrame — one row per (author, publication_id) pair —
     with network metrics joined in.
     """
-    import networkx as nx
     import community as community_louvain
+    import networkx as nx
 
     author_col = parameters.get("author_column", "")
     pub_col = parameters.get("publication_id_column", "")

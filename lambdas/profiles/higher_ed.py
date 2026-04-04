@@ -228,7 +228,7 @@ def cohort_flow_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> tuple[p
     result = result.merge(max_stage[[id_col] + ["stage_reached"]], on=id_col, how="left")
 
     # Funnel summary
-    group_keys = ([group_by] if isinstance(group_by, str) else list(group_by)) if group_by else []
+    _group_keys = ([group_by] if isinstance(group_by, str) else list(group_by)) if group_by else []
     funnel_rows = []
     for i, stage in enumerate(stage_order):
         reached = max_stage[max_stage["stage_reached_rank"] >= i]
@@ -280,7 +280,7 @@ def peer_benchmark_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> tupl
     metric_cols = parameters.get("metric_columns") or []
     id_col = parameters.get("id_column", "")
     focal_id = parameters.get("focal_id")
-    label_col = parameters.get("label_column")
+    _label_col = parameters.get("label_column")
 
     if isinstance(metric_cols, str):
         metric_cols = [metric_cols]

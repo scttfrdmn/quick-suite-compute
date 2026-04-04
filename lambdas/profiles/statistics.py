@@ -32,7 +32,7 @@ def logistic_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> tuple[pd.D
     coefficients ordered by absolute magnitude.
     """
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import roc_auc_score, confusion_matrix
+    from sklearn.metrics import confusion_matrix, roc_auc_score
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import StandardScaler
 

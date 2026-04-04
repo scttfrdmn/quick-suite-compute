@@ -85,8 +85,8 @@ class TestComputeStackSynthesis:
 
     def test_dashboard_has_cumulative_cost_widget(self, template):
         """Issue #25: each profile gets a 30-day cumulative cost widget in the dashboard."""
-        from pathlib import Path as _Path
         import json as _json
+        from pathlib import Path as _Path
         profiles_dir = _Path(__file__).parent.parent / "config" / "profiles"
         profiles = [_json.load(open(p)) for p in sorted(profiles_dir.glob("*.json"))]
         assert len(profiles) > 0, "No profiles found in config/profiles/"
@@ -100,6 +100,7 @@ class TestComputeStackSynthesis:
         """Issue #23: ROUTER_SPEND_TABLE env var is set on compute-run when context var provided."""
         import aws_cdk as cdk
         from aws_cdk.assertions import Template
+
         from stacks.compute_stack import ComputeStack
         app = cdk.App(context={
             "enable_emr": False,
@@ -137,6 +138,7 @@ class TestComputeStackSynthesis:
         """Issue #26: enable_vpc=true produces a VPC and VPC Gateway endpoint."""
         import aws_cdk as cdk
         from aws_cdk.assertions import Template
+
         from stacks.compute_stack import ComputeStack
         app = cdk.App(context={
             "enable_vpc": True,
@@ -154,6 +156,7 @@ class TestComputeStackSynthesis:
         """Issue #27: enable_kms=true produces KMS keys for HistoryTable and bucket."""
         import aws_cdk as cdk
         from aws_cdk.assertions import Template
+
         from stacks.compute_stack import ComputeStack
         app = cdk.App(context={
             "enable_kms": True,

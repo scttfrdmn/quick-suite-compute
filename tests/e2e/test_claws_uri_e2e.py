@@ -11,13 +11,11 @@ dataset backs the seeded record), but the integration point — compute_run →
 SFN → extract Lambda → claws-resolver invocation — is what we're verifying.
 """
 
-import json
 import time
 
-import boto3
 import pytest
 
-from tests.e2e.conftest import REGION, _E2E_USER_ARN, invoke, _session
+from tests.e2e.conftest import _E2E_USER_ARN, _session, invoke
 
 pytestmark = pytest.mark.e2e
 

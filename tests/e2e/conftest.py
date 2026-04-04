@@ -15,11 +15,8 @@ Run:
   AWS_PROFILE=aws python3 -m pytest tests/e2e/ -v -m e2e
 """
 
-import csv
-import io
 import json
 import os
-import time
 
 import boto3
 import pytest

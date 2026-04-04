@@ -192,7 +192,8 @@ def handler(event: dict, context) -> dict:
         if HISTORY_TABLE:
             try:
                 from datetime import datetime as _dt
-                from boto3.dynamodb.conditions import Key as _Key, Attr as _Attr
+
+                from boto3.dynamodb.conditions import Key as _Key
                 inp_data = json.loads(resp.get("input") or "{}")
                 running_user_arn = inp_data.get("user_arn", "")
                 current_month_prefix = _dt.now(timezone.utc).strftime("%Y-%m")

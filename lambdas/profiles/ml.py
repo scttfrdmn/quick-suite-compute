@@ -146,7 +146,7 @@ def random_forest_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> tuple
         )
 
     else:  # regress
-        from sklearn.metrics import r2_score, mean_absolute_error
+        from sklearn.metrics import mean_absolute_error, r2_score
 
         y = y_raw.astype(float)
         X_train, X_test, y_train, y_test = train_test_split(

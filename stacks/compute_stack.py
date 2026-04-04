@@ -266,7 +266,7 @@ class ComputeStack(Stack):
 
         # Lambda Layer: Profile modules (clustering, regression, forecast, etc.)
         # Used by non-runner Lambdas if needed. Runner uses container image.
-        profiles_layer = lambda_.LayerVersion(
+        _profiles_layer = lambda_.LayerVersion(
             self,
             "ProfilesLayer",
             code=lambda_.Code.from_asset("lambdas/profiles"),

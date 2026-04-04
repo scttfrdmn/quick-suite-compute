@@ -6,10 +6,10 @@ job, shared across all tests. The job is cancelled on teardown to avoid
 incurring the full analysis cost.
 """
 
-import time
 
 import pytest
-from tests.e2e.conftest import invoke, _E2E_USER_ARN
+
+from tests.e2e.conftest import _E2E_USER_ARN, invoke
 
 pytestmark = pytest.mark.e2e
 
