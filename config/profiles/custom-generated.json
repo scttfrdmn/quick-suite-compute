@@ -1,0 +1,40 @@
+{
+  "profile_id": "custom-generated",
+  "display_name": "AI-Generated Transform",
+  "description": "Generates a Python transform from a natural-language objective using the quick-suite-router 'code' tool, then executes it in a RestrictedPython sandbox against the input dataset. The generated script is stored in S3 for audit and reproducibility. Use when no standard profile fits and you can describe the desired transform in plain English. Requires ROUTER_INVOKE_ARN to be configured in the deployment.",
+  "category": "custom",
+  "backend": "lambda",
+  "entrypoint": "custom.custom_generated_handler",
+  "parameters": {
+    "objective": {
+      "type": "string",
+      "description": "Plain-English description of the desired DataFrame transform (e.g. 'compute rolling 4-week average of the revenue column grouped by department')"
+    },
+    "schema_hint": {
+      "type": "string_list",
+      "description": "Optional list of column names to include in the code-generation prompt. If omitted, the actual DataFrame column names are used."
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "default": 120,
+      "min": 10,
+      "max": 300,
+      "description": "Maximum wall-clock seconds for generated script execution (default 120, max 300)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 0,
+    "max_rows": 1000000,
+    "required_column_types": []
+  },
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "note": "Output shape depends on the AI-generated transform; the generated script is stored in diagnostics.script_s3_uri"
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 90,
+    "typical_cost_usd": 0.005
+  },
+  "tags": ["custom", "ai-generated", "code-generation", "transform", "sandbox", "natural-language"]
+}

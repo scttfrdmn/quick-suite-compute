@@ -620,6 +620,10 @@ class ComputeStack(Stack):
             message=sfn.TaskInput.from_json_path_at(
                 "States.Format('Your {} analysis could not be completed. Error: {}', $.profile.display_name, $.failure.error_message)"
             ),
+            # Issue #32: preserve original job context so AuditLogFailed can
+            # read $.execution_id, $.profile, etc. — without result_path the
+            # SNS Publish response would replace the entire state input.
+            result_path="$.notify_result",
         )
         handle_failure_task.next(notify_failure)
 
@@ -661,6 +665,9 @@ class ComputeStack(Stack):
             message=sfn.TaskInput.from_json_path_at(
                 "States.Format('Your {} analysis is complete. Results are available as a new dataset in Quick Sight: {}', $.profile.display_name, $.deliver.result_dataset_name)"
             ),
+            # Preserve original job context so AuditLogSucceeded can read
+            # $.execution_id, $.profile, etc. after this step.
+            result_path="$.notify_result",
         )
 
         emr_not_enabled = sfn.Fail(

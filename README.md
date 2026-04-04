@@ -26,29 +26,112 @@ under a minute.
 
 ## What You Get
 
-**Three tools** in Quick Suite's chat interface:
+**Seven tools** in Quick Suite's chat interface:
 
 | Tool | What it does |
 |------|-------------|
 | `compute_profiles` | List available analysis types with their inputs, outputs, costs, and durations |
-| `compute_run` | Validate the request, check the monthly budget, and start a job; returns a job ID immediately |
+| `compute_run` | Validate the request, check the monthly budget, and start a job; returns estimated cost and duration before starting |
 | `compute_status` | Check whether a job is running, succeeded, or failed; returns results and cost when done |
+| `compute_history` | List recent jobs for a user (most recent first) |
+| `compute_cancel` | Abort a running job |
+| `compute_snapshots` | List named result snapshots (set `result_label` in `compute_run` to create one) |
+| `compute_compare` | Diff two named snapshots: added/removed/unchanged row counts and schema diff |
 
-**Ten analysis profiles** — each a self-contained job definition that Quick Suite's agent
-selects based on what the user is asking for:
+**31 analysis profiles** grouped by category:
 
-| Profile | Method | University Use Case |
-|---------|--------|---------------------|
+**Statistics**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `anova` | One-way/N-way ANOVA | Course grade disparity by section; survey scale comparison |
+| `chi-square` | Chi-square test | FAFSA completion rate by demographic; admission decision distribution |
+
+**Prediction / ML**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `regression-glm` | GLM | Predict award amount; linear outcome modeling |
+| `regression-logistic` | Logistic regression | Predict graduation probability; donor lapse risk |
+| `classification-random-forest` | Random Forest | Multi-class classification; feature importance ranking |
+
+**Forecasting**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `forecast-prophet` | Prophet time series | Project enrollment 3 years forward; research expenditure trends |
+| `change-detection` | Ruptures change point | Detect structural breaks in enrollment or retention trends |
+| `seasonality-decompose` | STL decomposition | Extract trend and seasonal components from time series |
+
+**Clustering**
+| Profile | Method | Use Case |
+|---------|--------|---------|
 | `clustering-kmeans` | K-Means | Segment incoming students for yield strategy; donor prospect grouping |
-| `regression-glm` | GLM (linear/logistic) | Predict graduation probability; donor lapse risk |
-| `forecast-prophet` | Prophet time series | Project enrollment 3 years forward; research expenditure trends — container image Lambda |
-| `retention-cohort` | Cohort matrices | IPEDS retention reporting; accreditation self-studies |
+
+**Text Analytics**
+| Profile | Method | Use Case |
+|---------|--------|---------|
 | `text-topics` | LDA / NMF topic modeling | Analyze 40,000 course evaluation comments without manual coding |
+| `text-sentiment` | VADER | Score sentiment per page of policy documents or survey responses |
+| `text-similarity` | TF-IDF cosine | Near-duplicate detection in survey responses or grant narratives |
+
+**Anomaly Detection**
+| Profile | Method | Use Case |
+|---------|--------|---------|
 | `anomaly-isolation-forest` | Isolation Forest | Flag at-risk students by LMS engagement; unusual financial transactions |
-| `transform-spark` | Spark (EMR Serverless) | Join SIS + LMS + financial aid at scale |
-| `explore-correlations` | Correlation + feature importance | Identify leading indicators of donor engagement |
-| `geo-enrich` | Census Bureau ACS API | Append demographic variables to student or alumni addresses |
+
+**Higher-Ed Specific**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `retention-cohort` | Cohort matrices | IPEDS retention reporting; accreditation self-studies |
+| `cohort-flow` | Enrollment funnel | Application → admission → enrollment → persistence flow analysis |
+| `dfwi-analysis` | D/F/W/I rates | Grade distribution equity across sections, instructors, demographics |
+| `equity-gap` | Outcome disparity | Equity gap with effect sizes for accreditation and federal reporting |
+| `peer-benchmark` | Rank comparison | Rank your institution against a peer set on any metric |
 | `survival-kaplan-meier` | Kaplan-Meier | Time-to-degree by demographic group for equity reporting |
+
+**Geospatial**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `geo-enrich` | Census Bureau ACS | Append demographic variables to student or alumni addresses |
+| `isochrone` | Catchment area | Compute service area membership for facilities or events |
+| `spatial-aggregate` | Point-in-polygon | Aggregate student addresses by census tract or ZIP code |
+
+**Exploration**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `explore-correlations` | Correlation + feature importance | Identify leading indicators of donor engagement |
+
+**Research**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `grant-portfolio` | Burn rate + NCE risk | Flag awards at risk before fiscal year close; PI-level rollup |
+| `network-coauthor` | Graph centrality | Co-authorship network; identify collaboration bridge authors |
+
+**Ingest** (source-file → tabular; no input data required)
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `ingest-netcdf` | xarray flatten | Convert NetCDF4 climate or scientific data to tabular Parquet |
+| `ingest-pdf-extract` | pypdf | Extract text page by page from PDF documents in S3 |
+| `ingest-geojson` | shapely + WKT | Convert GeoJSON feature collections to a flat table |
+
+**Custom**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `custom-python` | RestrictedPython sandbox | Run your own `transform(df)` script from S3 |
+| `custom-generated` | LLM code generation | Describe what you want; the router writes and runs the script |
+
+**Transform**
+| Profile | Method | Use Case |
+|---------|--------|---------|
+| `transform-spark` | Spark (EMR Serverless) | Join SIS + LMS + financial aid at scale |
+
+**Additional features:**
+
+- **Chained profiles** — set `chain_profile_id` in `compute_run` to run two profiles in sequence in a single Step Functions execution; the first profile's output feeds directly into the second as input
+- **Named snapshots** — set `result_label` to save a result under a memorable name; retrieve with `compute_snapshots`; diff two snapshots with `compute_compare`
+- **Pre-submission cost estimate** — `compute_run` returns `estimated_cost_usd` and `estimated_duration_seconds` before starting the job
+- **clAWS URI resolution** — `source_uri: "claws://roda-ipeds-fall-enrollment"` resolves to a Quick Sight dataset via `ClawsLookupTable`
+- **Audit log** — every terminal job path writes an immutable record to `s3://compute-results/audit/{year}/{month}/{job_id}.json`
+- **VPC isolation** — `enable_vpc=true` CDK context places all runner Lambdas in isolated subnets with S3 Gateway endpoint
+- **KMS encryption** — `enable_kms=true` encrypts HistoryTable and results bucket with customer-managed keys
 
 **Step Functions workflow** — every job follows the same path:
 1. **CheckBudget** — verify the user hasn't exceeded their monthly spend limit
@@ -141,7 +224,7 @@ Two profiles are exceptions:
 - **`transform-spark`** — Runs on EMR Serverless, not Lambda. Requires
   `--context enable_emr=true` at deploy time.
 
-After deploying, register the three tool Lambdas as AgentCore Gateway Lambda targets.
+After deploying, register the tool Lambdas as AgentCore Gateway Lambda targets.
 Get all ARNs from the CloudFormation output:
 
 ```bash
@@ -161,11 +244,15 @@ uv run cdk deploy --context claws_resolver_arn=arn:aws:lambda:us-east-1:12345678
 ## Deployment Options
 
 ```bash
-uv run cdk deploy                                          # standard
-uv run cdk deploy --context enable_emr=true               # enable transform-spark profile
-uv run cdk deploy --context monthly_budget_usd=100        # raise per-user budget limit (default: $50)
-uv run cdk deploy --context max_concurrent_jobs=5         # raise concurrent job limit (default: 2)
-uv run cdk deploy --context claws_resolver_arn=arn:...    # enable claws:// URI resolution
+uv run cdk deploy                                             # standard
+uv run cdk deploy --context enable_emr=true                  # enable transform-spark profile
+uv run cdk deploy --context monthly_budget_usd=100           # raise per-user budget limit (default: $50)
+uv run cdk deploy --context max_concurrent_jobs=5            # raise concurrent job limit (default: 2)
+uv run cdk deploy --context claws_resolver_arn=arn:...       # enable claws:// URI resolution
+uv run cdk deploy --context enable_vpc=true                  # place all runner Lambdas in isolated VPC
+uv run cdk deploy --context enable_kms=true                  # KMS-encrypt HistoryTable and results bucket
+uv run cdk deploy --context router_spend_table_arn=arn:...   # cross-stack spend ledger for budget pre-check
+uv run cdk deploy --context router_invoke_arn=arn:...        # router Lambda ARN for custom-generated profile
 ```
 
 ## Cost

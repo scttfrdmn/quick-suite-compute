@@ -136,3 +136,54 @@ offices. Each use case maps to one or more compute profiles.
 **Workflow:** COACHE survey or faculty climate survey open-ended responses → topic discovery
 **Use case:** Identify themes in faculty satisfaction/dissatisfaction without manual coding; present findings to Faculty Senate
 **Output:** Dominant topics per response, proportions by department or rank, topic-term matrix
+
+---
+
+## Research Computing (Science-Facing)
+
+### Grant Burn Rate and NCE Risk Flagging
+**Profile:** grant-portfolio
+**Workflow:** Sponsored program expenditure data → burn rate per award → flag awards >90% expended → PI-level rollup
+**Use case:** Sponsored programs office pre-fiscal-year review; identify No-Cost Extension candidates; PI outreach prioritization
+**Output:** Every transaction row enriched with `burn_rate`, `pct_expended`, `nce_risk`; PI-level summary in diagnostics
+
+### Co-authorship Network and Collaboration Community Detection
+**Profile:** network-coauthor
+**Workflow:** Publication table with semicolon-separated author lists → weighted co-authorship graph → centrality + communities
+**Use case:** Identify faculty who bridge research clusters (high betweenness centrality); map collaboration landscape for strategic partnerships
+**Output:** One row per author-publication with `degree_centrality`, `betweenness_centrality`, `community_id`
+
+### Climate Data Ingest → Forecast Pipeline
+**Profile chain:** ingest-netcdf → forecast-prophet
+**Workflow:** NetCDF4 file in S3 (NOAA GHCN, ERA5, campus station) → flatten to tabular → Prophet forecast
+**Use case:** Infrastructure planning reports; NSF data management; campus sustainability tracking
+**Output:** Flattened time series + 12–36 month forecast with confidence intervals
+
+### PDF Document Ingest → Sentiment Analysis
+**Profile chain:** ingest-pdf-extract → text-sentiment
+**Workflow:** PDF document in S3 (accreditation study, NIH narrative, strategic plan) → text per page → VADER sentiment
+**Use case:** Identify sections with negative tone before accreditation submission; trend analysis across annual reports
+**Output:** One row per qualifying page with `page_number`, `text`, `sentiment`, `compound_score`
+
+### GeoJSON Campus Data → Spatial Analysis
+**Profile:** ingest-geojson
+**Workflow:** GeoJSON feature collection in S3 (building footprints, campus zones, service area polygons) → flat table with WKT geometry
+**Use case:** Join campus GIS data with space utilization or accessibility datasets in Quick Sight
+**Output:** One row per feature with all property columns + `geometry_wkt`, optional bbox columns
+
+---
+
+## Custom Analysis
+
+### Run a Validated Institutional Script
+**Profile:** custom-python
+**Workflow:** Upload a `transform(df)` Python script to S3 → compute_run with `profile_id: custom-python`, `script_uri`
+**Use case:** Institutional analytics team has existing data cleaning or normalization scripts they want to run on Quick Suite data without re-architecting them
+**Output:** Whatever `transform(df)` returns; script runs in a RestrictedPython sandbox (no network, no subprocess)
+**Security:** Script compiled at AST level with RestrictedPython before execution; only pd, numpy, scipy, scikit-learn available
+
+### Describe the Analysis in Plain Language
+**Profile:** custom-generated
+**Workflow:** Send a natural language `objective` to compute_run → router LLM generates a `transform(df)` script → script stored to S3 → executed in sandbox
+**Use case:** Analyst wants a novel computation (rolling average with spike flag, cohort flow Sankey, custom equity metric) but doesn't have a script ready; the LLM writes it
+**Audit trail:** Generated script stored at `s3://{bucket}/results/generated-scripts/{uuid}.py`; URI returned in diagnostics so IR team can review the generated code

@@ -1,0 +1,36 @@
+{
+  "profile_id": "custom-python",
+  "display_name": "Custom Python Transform",
+  "description": "Executes a user-supplied Python transform script stored in S3 against the input dataset. The script must define a function named transform(df) that accepts and returns a pandas DataFrame. Runs inside a RestrictedPython sandbox — network access, file I/O, subprocess, and class-hierarchy traversal are blocked at the AST level. Provides pd (pandas), np (numpy), scipy, and sklearn in the execution namespace. A configurable wall-clock timeout (default 120s, max 300s) is enforced. Intended for institution-specific transforms that do not fit a standard profile.",
+  "category": "custom",
+  "backend": "lambda",
+  "entrypoint": "custom.custom_python_handler",
+  "parameters": {
+    "script_uri": {
+      "type": "string",
+      "description": "S3 URI of the Python script to execute (s3://bucket/key.py). The script must define transform(df) -> pd.DataFrame."
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "default": 120,
+      "min": 10,
+      "max": 300,
+      "description": "Maximum wall-clock seconds for script execution (default 120, max 300)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 0,
+    "max_rows": 1000000,
+    "required_column_types": []
+  },
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "note": "Output shape depends entirely on the user-supplied transform script"
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 60,
+    "typical_cost_usd": 0.002
+  },
+  "tags": ["custom", "python", "transform", "sandbox", "scripting", "institution-specific"]
+}

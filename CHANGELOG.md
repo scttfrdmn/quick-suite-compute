@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-04-03
+
+### Added
+- **custom-python profile:** Executes a user-supplied Python script downloaded from S3 in a RestrictedPython AST sandbox; `transform(df)` entry point; SIGALRM timeout (default 120 s, max 300 s); safe namespace includes pd, numpy, scipy, scikit-learn; diagnostics include `script_uri`, `elapsed_seconds`, `input_rows`, `output_rows`
+- **custom-generated profile:** Invokes the quick-suite-router `code` tool via Lambda invoke to generate a `transform(df)` script from a natural-language `objective`; writes generated script to `s3://{results-bucket}/results/generated-scripts/{uuid}.py` for audit; executes via `custom_python_handler`; diagnostics include `generated_script`, `script_s3_uri`, `objective`
+- `lambdas/profiles/custom.py` — `custom_python_handler` and `custom_generated_handler` implementations
+- RestrictedPython v8.x added to runner Dockerfile; uses `safer_getattr` and `iter` from updated Guards API
+- 2 new profile JSONs: `config/profiles/custom-python.json`, `config/profiles/custom-generated.json`
+- `ROUTER_INVOKE_ARN` Lambda environment variable (set via `router_invoke_arn` CDK context)
+- 12 new unit tests: custom-python (happy path, timeout simulation, bad script, missing transform), custom-generated (mock router invoke, S3 write, objective passthrough)
+
+## [0.11.0] - 2026-04-03
+
+### Added
+- **grant-portfolio profile:** Computes burn rate, pct_expended, and nce_risk flag per award; merges award-level metrics back to original rows; optional PI-level rollup in diagnostics (`pi_column`); optional K-Means cluster by research area (`research_area_column`); NCE threshold configurable (default 0.90)
+- **network-coauthor profile:** Builds weighted co-authorship graph from semicolon-separated author lists; computes degree and betweenness centrality (approximate for >5000 nodes: k=500 sampling); Louvain community detection; output is one row per author-publication pair; diagnostics include `n_communities`, `density`, `top_authors_by_degree`
+- **ingest-netcdf profile:** Downloads NetCDF4 file from S3, flattens multidimensional arrays to tabular Parquet via xarray; configurable variable selection; ignores input DataFrame (`min_rows: 0`); diagnostics include `global_attrs`, `variables_extracted`, `dimensions`
+- **ingest-pdf-extract profile:** Extracts text page by page from a PDF in S3 using pypdf; filters short pages (`min_page_length`); output is one row per qualifying page with `page_number`, `text`, `char_count`; ignores input DataFrame (`min_rows: 0`)
+- **ingest-geojson profile:** Converts GeoJSON features to flat table with WKT geometry; optional `include_bbox` columns; uses shapely (already installed); output is one row per feature; ignores input DataFrame (`min_rows: 0`)
+- `lambdas/profiles/research.py` — `grant_portfolio_handler`, `coauthor_network_handler`
+- `lambdas/profiles/ingest.py` — `netcdf_handler`, `pdf_extract_handler`, `geojson_handler`
+- Dependencies added to runner Dockerfile: `networkx`, `python-louvain`, `xarray`, `netCDF4`, `pypdf`
+- 5 new profile JSONs in `config/profiles/`
+- 20 new unit tests across all five handlers; xarray and pypdf mocked to avoid binary file requirements in test suite
+
+## [0.10.0] - 2026-04-03
+
+### Added
+- **Higher-ed specific profiles:**
+  - `cohort-flow` — Enrollment funnel analysis: application → admission → enrollment → persistence flow by cohort
+  - `dfwi-analysis` — D/F/W/I rate analysis by course, instructor, or demographic group for equity and retention reporting
+  - `equity-gap` — Equity gap analysis computing outcome disparities by protected characteristic; effect sizes and confidence intervals
+  - `peer-benchmark` — Peer institution benchmarking: ranks input institution against peer set on selected metrics
+- **Geospatial profiles:**
+  - `isochrone` — Catchment area analysis; computes point-in-isochrone membership for events, facilities, or service areas
+  - `spatial-aggregate` — Point-in-polygon aggregation; joins point data to polygon boundaries (census tracts, ZIP codes, campus buildings)
+- `lambdas/profiles/higher_ed.py` — four higher-ed handlers
+- `lambdas/profiles/geospatial.py` — two geospatial handlers
+- 6 new profile JSONs; 18 new unit tests
+
+## [0.9.0] - 2026-04-03
+
+### Added
+- **Statistics profiles:**
+  - `anova` — One-way and N-way ANOVA with post-hoc Tukey HSD; reports F-statistic, p-value, effect size (eta²)
+  - `chi-square` — Chi-square test of independence for categorical variables; Cramér's V effect size
+- **Prediction / ML profiles:**
+  - `regression-logistic` — Logistic regression with class probability output; ROC AUC, precision-recall curves in diagnostics
+  - `classification-random-forest` — Random Forest for classification and regression; feature importance ranking; supports large feature sets
+- **Text analytics profiles:**
+  - `text-sentiment` — VADER sentiment scoring per row; compound score, positive/negative/neutral proportions; batch mode for large datasets
+  - `text-similarity` — Pairwise near-duplicate detection; TF-IDF cosine similarity; configurable similarity threshold; `duplicate_group_id` column output
+- **Time series profiles:**
+  - `change-detection` — Change point detection via ruptures; identifies structural breaks in time series with penalty-based segmentation
+  - `seasonality-decompose` — STL seasonal decomposition; extracts trend, seasonal, and residual components from time series data
+- `lambdas/profiles/statistics.py`, `lambdas/profiles/ml.py`, `lambdas/profiles/text_analytics.py`, `lambdas/profiles/time_series.py` — new handler modules
+- 8 new profile JSONs; 24 new unit tests
+- `docs/profile-authoring.md` — profile authoring guide for contributors
+
 ## [0.8.0] - 2026-04-02
 
 ### Added
@@ -107,7 +166,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EMR Serverless stub for Spark transform profile (returns `requires_emr` when not enabled)
 - CDK stack with Lambda layers for scientific Python (scikit-learn, pandas, statsmodels, prophet, lifelines) and infrastructure wiring
 
-[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.3...v0.5.0
 [0.4.2]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.4.0...v0.4.1
