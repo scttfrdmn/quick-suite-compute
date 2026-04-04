@@ -1,0 +1,33 @@
+{
+  "profile_id": "ingest-netcdf",
+  "display_name": "Ingest NetCDF File",
+  "description": "Converts a NetCDF4 (.nc) file stored in S3 to a tabular DataFrame. Downloads the file, opens it with xarray, optionally subsets variables, and flattens all dimensions to rows. All-NaN rows are dropped. The input dataset is ignored — this profile operates entirely from the source_uri parameter. Typical use: import climate sensor arrays, oceanographic model output, or atmospheric reanalysis grids for downstream forecasting or anomaly detection.",
+  "category": "ingest",
+  "backend": "lambda",
+  "entrypoint": "ingest.netcdf_handler",
+  "parameters": {
+    "source_uri": {
+      "type": "string",
+      "description": "S3 URI of the NetCDF4 file to ingest (s3://bucket/key.nc)"
+    },
+    "variables": {
+      "type": "string_list",
+      "description": "Variable names to extract (default: all variables in the dataset)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 0,
+    "max_rows": 0,
+    "required_column_types": []
+  },
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "note": "Output columns depend on the NetCDF file content: dimension index columns + one column per variable"
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 60,
+    "typical_cost_usd": 0.002
+  },
+  "tags": ["ingest", "netcdf", "climate", "geoscience", "raster", "xarray", "academic-research"]
+}

@@ -1,0 +1,68 @@
+{
+  "profile_id": "grant-portfolio",
+  "display_name": "Grant Portfolio Analysis",
+  "description": "Computes burn rate, percent expended, and NCE (no-cost extension) risk per award from transaction-level sponsored program data. Groups transactions by award ID, calculates cumulative spend against budget, and flags awards nearing or exceeding the NCE threshold. Optionally produces PI-level productivity summaries and K-Means award clusters by research area. Each input row is returned with award-level metrics merged in.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "research.grant_portfolio_handler",
+  "parameters": {
+    "amount_column": {
+      "type": "column",
+      "description": "Column containing transaction amounts (numeric)"
+    },
+    "budget_column": {
+      "type": "column",
+      "description": "Column containing the award budget (constant per award, or sliced per transaction)"
+    },
+    "date_column": {
+      "type": "column",
+      "description": "Column containing the transaction date"
+    },
+    "award_id_column": {
+      "type": "column",
+      "description": "Column containing the award or grant ID"
+    },
+    "pi_column": {
+      "type": "column",
+      "description": "Principal investigator name column (optional; enables PI-level rollup in diagnostics)"
+    },
+    "research_area_column": {
+      "type": "column",
+      "description": "Research area or department column (optional; enables K-Means clustering by area)"
+    },
+    "nce_threshold": {
+      "type": "float",
+      "default": 0.90,
+      "min": 0.5,
+      "max": 1.0,
+      "description": "Burn-rate fraction above which nce_risk is flagged true (default 0.90 = 90% expended)"
+    },
+    "n_clusters": {
+      "type": "integer",
+      "default": 3,
+      "min": 2,
+      "max": 10,
+      "description": "Number of K-Means clusters when research_area_column is supplied"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 1,
+    "max_rows": 1000000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["amount_column", "budget_column", "date_column", "award_id_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "burn_rate", "type": "float"},
+      {"name": "pct_expended", "type": "float"},
+      {"name": "nce_risk", "type": "boolean"}
+    ],
+    "extra_tables": ["portfolio_summary", "pi_summary", "area_clusters"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 20,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["research", "grants", "sponsored-programs", "finance", "nce", "burn-rate", "higher-ed"]
+}

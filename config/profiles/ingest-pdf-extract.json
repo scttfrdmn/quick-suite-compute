@@ -1,0 +1,44 @@
+{
+  "profile_id": "ingest-pdf-extract",
+  "display_name": "Ingest PDF (Text Extraction)",
+  "description": "Extracts text from a PDF file stored in S3, producing one row per page. Downloads PDF bytes and parses with pypdf. Filters out near-blank pages shorter than min_page_length characters. The input dataset is ignored — this profile operates entirely from the source_uri parameter. Typical use: ingest policy documents, grant proposals, accreditation reports, or research papers for downstream topic modeling or sentiment analysis.",
+  "category": "ingest",
+  "backend": "lambda",
+  "entrypoint": "ingest.pdf_extract_handler",
+  "parameters": {
+    "source_uri": {
+      "type": "string",
+      "description": "S3 URI of the PDF file to extract (s3://bucket/key.pdf)"
+    },
+    "include_page_numbers": {
+      "type": "boolean",
+      "default": true,
+      "description": "Include a page_number column in the output (default true)"
+    },
+    "min_page_length": {
+      "type": "integer",
+      "default": 50,
+      "min": 0,
+      "max": 10000,
+      "description": "Minimum character count per page to include; pages shorter than this are filtered (default 50)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 0,
+    "max_rows": 0,
+    "required_column_types": []
+  },
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [
+      {"name": "page_number", "type": "integer"},
+      {"name": "text", "type": "string"},
+      {"name": "char_count", "type": "integer"}
+    ]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 30,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["ingest", "pdf", "text-extraction", "document", "policy", "research", "academic-research"]
+}

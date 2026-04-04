@@ -1,0 +1,39 @@
+{
+  "profile_id": "ingest-geojson",
+  "display_name": "Ingest GeoJSON (Feature Extraction)",
+  "description": "Converts a GeoJSON FeatureCollection stored in S3 to a tabular DataFrame. Each feature becomes one row; all feature properties become columns; the geometry is converted to a WKT string via shapely. The input dataset is ignored — this profile operates entirely from the source_uri parameter. Typical use: import campus boundary layers, census tract polygons, transit service areas, or alumni ZIP-code polygons for downstream geo-enrichment or spatial aggregation.",
+  "category": "ingest",
+  "backend": "lambda",
+  "entrypoint": "ingest.geojson_handler",
+  "parameters": {
+    "source_uri": {
+      "type": "string",
+      "description": "S3 URI of the GeoJSON file to ingest (s3://bucket/key.geojson)"
+    },
+    "geometry_column": {
+      "type": "string",
+      "default": "geometry_wkt",
+      "description": "Name of the output column that will hold the WKT geometry string (default 'geometry_wkt')"
+    },
+    "include_bbox": {
+      "type": "boolean",
+      "default": false,
+      "description": "Add bbox_minx, bbox_miny, bbox_maxx, bbox_maxy columns from each geometry's bounding box (default false)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 0,
+    "max_rows": 0,
+    "required_column_types": []
+  },
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "note": "Output columns: all GeoJSON feature property keys + geometry_wkt (and optional bbox columns)"
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 20,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["ingest", "geojson", "geospatial", "vector", "boundaries", "campus", "census", "shapely"]
+}

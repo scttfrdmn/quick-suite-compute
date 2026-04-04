@@ -1,0 +1,52 @@
+{
+  "profile_id": "network-coauthor",
+  "display_name": "Co-authorship Network Analysis",
+  "description": "Builds a weighted co-authorship collaboration network from publication data. Each row is a publication with a separator-delimited author list. Computes degree centrality, betweenness centrality, and Louvain community assignments per author. Returns one row per (author, publication) pair with network metrics joined in. Useful for research office analytics: identifying interdisciplinary bridges, isolated researchers, and productive collaboration clusters.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "research.coauthor_network_handler",
+  "parameters": {
+    "author_column": {
+      "type": "column",
+      "description": "Column containing the author list (separator-delimited string)"
+    },
+    "publication_id_column": {
+      "type": "column",
+      "description": "Column uniquely identifying each publication"
+    },
+    "author_separator": {
+      "type": "string",
+      "default": ";",
+      "description": "Delimiter separating author names within the author_column (default ';')"
+    },
+    "min_collaborations": {
+      "type": "integer",
+      "default": 1,
+      "min": 1,
+      "max": 100,
+      "description": "Minimum co-authored publications to include an edge in the network (default 1)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 1,
+    "max_rows": 500000,
+    "required_column_types": ["string"],
+    "column_parameters": ["author_column", "publication_id_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [
+      {"name": "author", "type": "string"},
+      {"name": "publication_id", "type": "string"},
+      {"name": "degree_centrality", "type": "float"},
+      {"name": "betweenness_centrality", "type": "float"},
+      {"name": "community_id", "type": "integer"}
+    ],
+    "extra_tables": ["top_authors_by_degree"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 45,
+    "typical_cost_usd": 0.002
+  },
+  "tags": ["research", "network", "graph", "coauthorship", "collaboration", "bibliometrics", "higher-ed"]
+}
