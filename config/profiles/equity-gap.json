@@ -1,0 +1,48 @@
+{
+  "profile_id": "equity-gap",
+  "display_name": "Equity Gap Analysis",
+  "description": "Disaggregates an outcome metric by one or more demographic groups and computes gap indices relative to a reference group (or the overall mean). Returns per-group mean, gap from reference, and equity index (group mean / reference mean). The most-requested IR analysis for accreditation and equity reporting.",
+  "category": "higher-ed",
+  "backend": "lambda",
+  "entrypoint": "higher_ed.equity_gap_handler",
+  "parameters": {
+    "metric_column": {
+      "type": "column",
+      "description": "Numeric outcome to disaggregate (e.g. gpa, graduation_rate, completion_pct)"
+    },
+    "group_columns": {
+      "type": "column_list",
+      "min_columns": 1,
+      "description": "Demographic columns to disaggregate by (e.g. pell_recipient, first_gen, ethnicity)"
+    },
+    "reference_group": {
+      "type": "string",
+      "description": "Value in the first group column to use as the reference (e.g. 'non-Pell'). Defaults to overall mean if omitted."
+    },
+    "min_group_size": {
+      "type": "integer",
+      "default": 10,
+      "min": 1,
+      "description": "Minimum number of records per group to include in the gap table (default 10)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 10,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["metric_column", "group_columns"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "group_mean", "type": "float"},
+      {"name": "equity_index", "type": "float"}
+    ],
+    "extra_tables": ["gap_table"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 10,
+    "typical_cost_usd": 0.0005
+  },
+  "tags": ["equity", "gap-analysis", "disaggregation", "demographics", "accreditation", "ir", "pell", "first-gen", "retention", "completion", "higher-ed"]
+}

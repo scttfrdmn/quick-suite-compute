@@ -1,0 +1,55 @@
+{
+  "profile_id": "spatial-aggregate",
+  "display_name": "Spatial Aggregation (Point-in-Polygon)",
+  "description": "Assigns each lat/lon point to its containing polygon from a GeoJSON boundary file, then aggregates specified metrics by polygon. Use to roll up student home addresses by county/district for equity analysis, map alumni giving by congressional district, or aggregate research site observations by administrative boundary. The boundary GeoJSON must be stored in S3.",
+  "category": "geospatial",
+  "backend": "lambda",
+  "entrypoint": "geospatial.spatial_aggregate_handler",
+  "parameters": {
+    "lat_column": {
+      "type": "column",
+      "description": "Latitude column (decimal degrees)"
+    },
+    "lon_column": {
+      "type": "column",
+      "description": "Longitude column (decimal degrees)"
+    },
+    "boundary_uri": {
+      "type": "string",
+      "description": "S3 path to a GeoJSON FeatureCollection of polygons (e.g. s3://my-bucket/counties.geojson)"
+    },
+    "metric_columns": {
+      "type": "column_list",
+      "description": "Numeric columns to aggregate by polygon"
+    },
+    "agg_functions": {
+      "type": "string_list",
+      "default": ["count", "mean"],
+      "description": "Aggregation functions to apply: count, mean, sum, median, min, max"
+    },
+    "label_column": {
+      "type": "string",
+      "default": "name",
+      "description": "GeoJSON feature property to use as the polygon label (default: 'name')"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 1,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["lat_column", "lon_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "polygon_id", "type": "integer"},
+      {"name": "polygon_label", "type": "string"}
+    ],
+    "extra_tables": ["polygon_summary"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 30,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["geospatial", "spatial", "point-in-polygon", "aggregation", "equity", "census", "districts", "mapping"]
+}

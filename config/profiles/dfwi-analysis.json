@@ -1,0 +1,47 @@
+{
+  "profile_id": "dfwi-analysis",
+  "display_name": "D/F/W/I Rate Analysis",
+  "description": "Computes D/F/W/I (Drop/Fail/Withdraw/Incomplete) rates aggregated by course, section, instructor, student demographic, or any combination. A standard metric for accreditation (HLC, SACSCOC, WASC) and course-level equity reporting. Returns a DFWI rate summary table and annotates individual records with an is_dfwi flag.",
+  "category": "higher-ed",
+  "backend": "lambda",
+  "entrypoint": "higher_ed.dfwi_handler",
+  "parameters": {
+    "grade_column": {
+      "type": "column",
+      "description": "Column containing grade values (e.g. letter grade, grade code)"
+    },
+    "dfwi_values": {
+      "type": "string_list",
+      "default": ["D", "F", "W", "I"],
+      "description": "Grade values that count as DFWI outcomes (default: D, F, W, I)"
+    },
+    "group_by": {
+      "type": "column_list",
+      "description": "Columns to aggregate by (e.g. course_id, instructor_id, department, pell_recipient). Leave empty for overall rate only."
+    },
+    "min_enrollment": {
+      "type": "integer",
+      "default": 5,
+      "min": 1,
+      "description": "Minimum enrollment per group to include in the summary (default 5)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 5,
+    "max_rows": 500000,
+    "required_column_types": [],
+    "column_parameters": ["grade_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "is_dfwi", "type": "boolean"}
+    ],
+    "extra_tables": ["dfwi_summary"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 10,
+    "typical_cost_usd": 0.0005
+  },
+  "tags": ["dfwi", "grades", "course-outcomes", "accreditation", "equity", "ir", "curriculum", "higher-ed"]
+}

@@ -1,0 +1,47 @@
+{
+  "profile_id": "peer-benchmark",
+  "display_name": "Peer Benchmarking",
+  "description": "Computes z-scores and percentile ranks for specified metrics across a peer group dataset. Identifies a focal institution and highlights its position relative to peers. Use with IPEDS or custom peer comparison datasets to benchmark graduation rates, research expenditure, enrollment trends, or any institutional metric.",
+  "category": "higher-ed",
+  "backend": "lambda",
+  "entrypoint": "higher_ed.peer_benchmark_handler",
+  "parameters": {
+    "metric_columns": {
+      "type": "column_list",
+      "min_columns": 1,
+      "description": "Numeric metric columns to benchmark (e.g. graduation_rate, research_expenditure)"
+    },
+    "id_column": {
+      "type": "column",
+      "description": "Column containing institution identifiers (e.g. unitid, institution_name)"
+    },
+    "focal_id": {
+      "type": "string",
+      "description": "Identifier value of your institution in the dataset (e.g. '123456' or 'State University')"
+    },
+    "label_column": {
+      "type": "column",
+      "description": "Optional column with human-readable institution names for display"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 2,
+    "max_rows": 10000,
+    "required_column_types": ["numeric"],
+    "column_parameters": ["metric_columns", "id_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "{metric}_zscore", "type": "float"},
+      {"name": "{metric}_percentile", "type": "float"},
+      {"name": "is_focal", "type": "boolean"}
+    ],
+    "extra_tables": ["focal_institution_summary"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 5,
+    "typical_cost_usd": 0.0003
+  },
+  "tags": ["benchmarking", "peers", "ipeds", "z-score", "percentile", "institutional-research", "rankings", "higher-ed"]
+}

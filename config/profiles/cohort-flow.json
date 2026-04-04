@@ -1,0 +1,48 @@
+{
+  "profile_id": "cohort-flow",
+  "display_name": "Cohort Flow (Enrollment Funnel)",
+  "description": "Tracks individuals through an ordered sequence of stages (e.g. applied → admitted → enrolled → persisted → graduated) and computes flow counts and conversion rates at each transition. Returns a funnel summary table and annotates each record with the furthest stage reached. Essential for enrollment management and accreditation reporting.",
+  "category": "higher-ed",
+  "backend": "lambda",
+  "entrypoint": "higher_ed.cohort_flow_handler",
+  "parameters": {
+    "id_column": {
+      "type": "column",
+      "description": "Unique individual identifier (e.g. student_id, applicant_id)"
+    },
+    "stage_column": {
+      "type": "column",
+      "description": "Column containing the stage value for each record row"
+    },
+    "stage_order": {
+      "type": "string_list",
+      "description": "Ordered list of stage values from first to last (e.g. ['applied','admitted','enrolled','graduated'])"
+    },
+    "cohort_column": {
+      "type": "column",
+      "description": "Optional column to segment the funnel by cohort (e.g. entry_term, entry_year)"
+    },
+    "group_by": {
+      "type": "column",
+      "description": "Optional column to further segment results (e.g. degree_program, pell_recipient)"
+    }
+  },
+  "input_requirements": {
+    "min_rows": 10,
+    "max_rows": 500000,
+    "required_column_types": [],
+    "column_parameters": ["id_column", "stage_column"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "stage_reached", "type": "string"}
+    ],
+    "extra_tables": ["funnel"]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 15,
+    "typical_cost_usd": 0.0005
+  },
+  "tags": ["cohort", "funnel", "enrollment", "retention", "graduation", "pipeline", "accreditation", "ipeds", "higher-ed"]
+}
