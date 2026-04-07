@@ -21,11 +21,15 @@ Output:
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
+from botocore.exceptions import ClientError
+
+_LABEL_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -55,17 +59,34 @@ def handler(event: dict, context) -> dict:
         logger.error(json.dumps({"negative_cost": cost, "execution_id": event.get("execution_id"), "clamped_to": 0}))
         cost = 0.0
 
+    budget_limit = float(os.environ.get("MONTHLY_BUDGET_USD", "50"))
+    remaining = Decimal(str(budget_limit)) - Decimal(str(cost))
+
     table = dynamodb.Table(table_name)
     try:
         table.update_item(
             Key={"user_arn": user_arn, "month": month},
             UpdateExpression="ADD spend_usd :cost SET last_updated = :ts",
+            ConditionExpression="attribute_not_exists(spend_usd) OR spend_usd <= :remaining",
             ExpressionAttributeValues={
                 ":cost": Decimal(str(cost)),
                 ":ts": datetime.now(timezone.utc).isoformat(),
+                ":remaining": remaining,
             },
         )
         logger.info(json.dumps({"recorded_spend": cost, "user_arn": user_arn, "month": month}))
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            logger.warning(json.dumps({
+                "budget_exceeded_at_record": True,
+                "user_arn": user_arn,
+                "cost": cost,
+                "budget_limit": budget_limit,
+            }))
+            # Fail open — budget was checked before job started; log but don't crash
+        else:
+            logger.error(f"Failed to record spend: {exc}")
+            return {"recorded": False, "spend_usd": cost, "month": month, "error": str(exc)}
     except Exception as exc:
         logger.error(f"Failed to record spend: {exc}")
         return {"recorded": False, "spend_usd": cost, "month": month,
@@ -128,6 +149,9 @@ def handler(event: dict, context) -> dict:
 
     # Write named snapshot if result_label is provided (Issue 19)
     result_label = (event.get("result_label") or "").strip()
+    if result_label and not _LABEL_RE.match(result_label):
+        logger.warning(json.dumps({"invalid_result_label": True, "label": result_label[:128]}))
+        result_label = ""  # skip snapshot write — don't fail the workflow
     snapshots_table_name = os.environ.get("SNAPSHOTS_TABLE", "")
     if result_label and snapshots_table_name:
         try:

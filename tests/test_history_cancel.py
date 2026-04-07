@@ -148,12 +148,19 @@ _SM_ARN = "arn:aws:states:us-east-1:123456789012:stateMachine:qs-compute-job"
 _JOB_ID = "job-deadbeef-20260401"
 
 
-def _mock_sfn(stop_side_effect=None):
+def _mock_sfn(stop_side_effect=None, describe_side_effect=None, owner_arn=None):
     mock = MagicMock()
     if stop_side_effect is not None:
         mock.stop_execution.side_effect = stop_side_effect
     else:
         mock.stop_execution.return_value = {}
+    if describe_side_effect is not None:
+        mock.describe_execution.side_effect = describe_side_effect
+    else:
+        import json as _json
+        mock.describe_execution.return_value = {
+            "input": _json.dumps({"user_arn": owner_arn or _USER_ARN})
+        }
     mock.exceptions.ExecutionDoesNotExist = ExecutionDoesNotExist
     return mock
 
@@ -162,13 +169,13 @@ class TestComputeCancel:
 
     def test_happy_path_cancels_execution(self):
         with patch.object(_cancel, "sfn", _mock_sfn()):
-            result = _cancel.handler({"job_id": _JOB_ID}, None)
+            result = _cancel.handler({"job_id": _JOB_ID, "user_arn": _USER_ARN}, None)
         assert result == {"status": "cancelled", "job_id": _JOB_ID}
 
     def test_correct_execution_arn_constructed(self):
         mock_sfn = _mock_sfn()
         with patch.object(_cancel, "sfn", mock_sfn):
-            _cancel.handler({"job_id": _JOB_ID}, None)
+            _cancel.handler({"job_id": _JOB_ID, "user_arn": _USER_ARN}, None)
         call_kwargs = mock_sfn.stop_execution.call_args[1]
         arn = call_kwargs["executionArn"]
         assert ":execution:" in arn
@@ -177,30 +184,42 @@ class TestComputeCancel:
 
     def test_missing_job_id_returns_error(self):
         with patch.object(_cancel, "sfn", _mock_sfn()):
-            result = _cancel.handler({}, None)
+            result = _cancel.handler({"user_arn": _USER_ARN}, None)
         assert "error" in result
 
     def test_whitespace_job_id_returns_error(self):
         with patch.object(_cancel, "sfn", _mock_sfn()):
-            result = _cancel.handler({"job_id": "  "}, None)
+            result = _cancel.handler({"job_id": "  ", "user_arn": _USER_ARN}, None)
         assert "error" in result
 
-    def test_execution_does_not_exist(self):
+    def test_missing_user_arn_returns_error(self):
+        with patch.object(_cancel, "sfn", _mock_sfn()):
+            result = _cancel.handler({"job_id": _JOB_ID}, None)
+        assert "error" in result
+
+    def test_execution_does_not_exist_at_describe(self):
+        mock_sfn = _mock_sfn(describe_side_effect=ExecutionDoesNotExist())
+        with patch.object(_cancel, "sfn", mock_sfn):
+            result = _cancel.handler({"job_id": _JOB_ID, "user_arn": _USER_ARN}, None)
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    def test_execution_does_not_exist_at_stop(self):
         mock_sfn = _mock_sfn(stop_side_effect=ExecutionDoesNotExist())
         with patch.object(_cancel, "sfn", mock_sfn):
-            result = _cancel.handler({"job_id": _JOB_ID}, None)
+            result = _cancel.handler({"job_id": _JOB_ID, "user_arn": _USER_ARN}, None)
         assert "error" in result
         assert "not found" in result["error"].lower()
 
     def test_execution_already_complete(self):
         mock_sfn = _mock_sfn(stop_side_effect=ExecutionAlreadyComplete())
         with patch.object(_cancel, "sfn", mock_sfn):
-            result = _cancel.handler({"job_id": _JOB_ID}, None)
+            result = _cancel.handler({"job_id": _JOB_ID, "user_arn": _USER_ARN}, None)
         assert "error" in result
         assert "already completed" in result["error"].lower() or "cannot be cancelled" in result["error"].lower()
 
     def test_generic_exception_returns_error_dict(self):
         mock_sfn = _mock_sfn(stop_side_effect=Exception("network error"))
         with patch.object(_cancel, "sfn", mock_sfn):
-            result = _cancel.handler({"job_id": _JOB_ID}, None)
+            result = _cancel.handler({"job_id": _JOB_ID, "user_arn": _USER_ARN}, None)
         assert "error" in result

@@ -35,10 +35,26 @@ def handler(event: dict, context) -> dict:
     if not job_id:
         return {"error": "job_id is required"}
 
+    user_arn = event.get("user_arn", "").strip()
+    if not user_arn:
+        return {"error": "user_arn is required"}
+
     # Reconstruct the execution ARN from the state machine ARN and job ID.
     # State machine ARN:  arn:aws:states:REGION:ACCOUNT:stateMachine:NAME
     # Execution ARN:      arn:aws:states:REGION:ACCOUNT:execution:NAME:JOB_ID
     execution_arn = STATE_MACHINE_ARN.replace(":stateMachine:", ":execution:") + ":" + job_id
+
+    # Verify ownership before cancelling — same "not found" message to avoid info leak
+    try:
+        desc = sfn.describe_execution(executionArn=execution_arn)
+        execution_input = json.loads(desc.get("input", "{}"))
+        if execution_input.get("user_arn") != user_arn:
+            return {"error": f"Job {job_id!r} not found"}
+    except sfn.exceptions.ExecutionDoesNotExist:
+        return {"error": f"Job {job_id!r} not found"}
+    except Exception as exc:
+        logger.warning(f"describe_execution failed: {exc}")
+        return {"error": f"Failed to cancel job: {exc}"}
 
     try:
         sfn.stop_execution(

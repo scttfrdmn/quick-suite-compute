@@ -50,6 +50,15 @@ _ARN_RE = re.compile(
     r"^arn:aws:iam::\d{12}:(user|role|assumed-role)/[\w+=,.@/-]+$"
 )
 
+_LABEL_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+
+MAX_STRING_PARAM_LENGTH = 256
+
+# Comma-separated bucket names; when non-empty, source_uri bucket must be in the list.
+ALLOWED_BUCKETS: set[str] = set(
+    b.strip() for b in os.environ.get("COMPUTE_ALLOWED_BUCKETS", "").split(",") if b.strip()
+)
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -118,6 +127,8 @@ def _estimate_cost_from_dataset(profile: dict, source_uri: str) -> tuple[float, 
         bucket, _, key = without_scheme.partition("/")
         if not bucket or not key:
             return base_cost, base_duration
+        if ALLOWED_BUCKETS and bucket not in ALLOWED_BUCKETS:
+            return base_cost, base_duration
         s3_client = boto3.client("s3")
         head = s3_client.head_object(Bucket=bucket, Key=key)
         size_bytes = head.get("ContentLength", 0)
@@ -172,22 +183,36 @@ def _validate_params(profile: dict, user_params: dict) -> list[str]:
         elif ptype == "column_list":
             if not isinstance(val, list):
                 errors.append(f"Parameter '{param_name}' must be a list of column names")
-            elif not all(isinstance(c, str) for c in val):
-                errors.append(f"Parameter '{param_name}' must contain only string column names")
             elif len(val) < spec.get("min_columns", 0):
                 errors.append(
                     f"Parameter '{param_name}' requires at least {spec['min_columns']} columns"
                 )
+            else:
+                for i, c in enumerate(val):
+                    if not isinstance(c, str) or len(c) > MAX_STRING_PARAM_LENGTH:
+                        errors.append(
+                            f"Parameter '{param_name}[{i}]' must be a string "
+                            f"≤ {MAX_STRING_PARAM_LENGTH} characters"
+                        )
         elif ptype == "string_list":
             if not isinstance(val, list):
                 errors.append(f"Parameter '{param_name}' must be a list of strings")
-            elif not all(isinstance(s, str) for s in val):
-                errors.append(f"Parameter '{param_name}' must contain only strings")
             elif "max_items" in spec and len(val) > spec["max_items"]:
                 errors.append(f"Parameter '{param_name}' exceeds max {spec['max_items']} items")
+            else:
+                for i, s in enumerate(val):
+                    if not isinstance(s, str) or len(s) > MAX_STRING_PARAM_LENGTH:
+                        errors.append(
+                            f"Parameter '{param_name}[{i}]' must be a string "
+                            f"≤ {MAX_STRING_PARAM_LENGTH} characters"
+                        )
         elif ptype == "column":
             if not isinstance(val, str):
                 errors.append(f"Parameter '{param_name}' must be a column name string")
+            elif len(val) > MAX_STRING_PARAM_LENGTH:
+                errors.append(
+                    f"Parameter '{param_name}' exceeds max length {MAX_STRING_PARAM_LENGTH}"
+                )
 
     return errors
 
@@ -209,8 +234,13 @@ def handler(event: dict, context) -> dict:
 
     # Validate source_uri if provided
     source_uri = (event.get("source_uri") or "").strip()
-    if source_uri and not (source_uri.startswith("s3://") or source_uri.startswith("claws://")):
-        return {"error": "source_uri must start with 's3://' or 'claws://'"}
+    if source_uri:
+        if not (source_uri.startswith("s3://") or source_uri.startswith("claws://")):
+            return {"error": "source_uri must start with 's3://' or 'claws://'"}
+        if source_uri.startswith("s3://") and ALLOWED_BUCKETS:
+            bucket = source_uri[5:].split("/")[0]
+            if bucket not in ALLOWED_BUCKETS:
+                return {"error": "source_uri bucket is not in the allowed list"}
 
     dataset_id = (event.get("dataset_id") or "").strip()
     if not dataset_id and not source_uri:
@@ -362,6 +392,8 @@ def _run_single(event: dict, profile_id: str, user_arn: str,
 
     # Issue 22: compute pre-submission cost estimate using profile + dataset size
     result_label = (event.get("result_label") or "").strip()
+    if result_label and not _LABEL_RE.match(result_label):
+        return {"error": "result_label must be 1–64 alphanumeric, hyphen, or underscore characters"}
     est_cost, est_duration = _estimate_cost_from_dataset(profile, source_uri)
     if chain_profile:
         chain_cost = float(chain_profile.get("cost_estimate", {}).get("typical_cost_usd", 0))

@@ -55,10 +55,16 @@ from aws_cdk import (
     aws_lambda as lambda_,
 )
 from aws_cdk import (
+    aws_logs as logs,
+)
+from aws_cdk import (
     aws_s3 as s3,
 )
 from aws_cdk import (
     aws_s3_deployment as s3deploy,
+)
+from aws_cdk import (
+    aws_scheduler as scheduler,
 )
 from aws_cdk import (
     aws_sns as sns,
@@ -102,6 +108,7 @@ class ComputeStack(Stack):
         notification_email = self.node.try_get_context("notification_email") or ""
         claws_resolver_arn = self.node.try_get_context("claws_resolver_arn") or ""
         router_spend_table_arn = self.node.try_get_context("router_spend_table_arn") or ""
+        router_invoke_arn = self.node.try_get_context("router_invoke_arn") or ""
 
         config_dir = Path(__file__).parent.parent / "config"
         profiles = _load_profiles(config_dir)
@@ -201,7 +208,9 @@ class ComputeStack(Stack):
                 name="month", type=dynamodb.AttributeType.STRING
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=RemovalPolicy.RETAIN,
+            point_in_time_recovery=True,
+            deletion_protection=True,
         )
 
         # -----------------------------------------------------------------
@@ -218,7 +227,9 @@ class ComputeStack(Stack):
                 name="label", type=dynamodb.AttributeType.STRING
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=RemovalPolicy.RETAIN,
+            point_in_time_recovery=True,
+            deletion_protection=True,
         )
 
         # -----------------------------------------------------------------
@@ -236,7 +247,9 @@ class ComputeStack(Stack):
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             time_to_live_attribute="ttl",
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=RemovalPolicy.RETAIN,
+            point_in_time_recovery=True,
+            deletion_protection=True,
             encryption=dynamodb.TableEncryption.CUSTOMER_MANAGED if enable_kms else dynamodb.TableEncryption.AWS_MANAGED,
             encryption_key=history_table_kms_key if enable_kms else None,
         )
@@ -327,6 +340,15 @@ class ComputeStack(Stack):
             )
         )
 
+        # Issue #74: grant runner Lambda permission to invoke the router (custom-generated profile)
+        if router_invoke_arn:
+            runner_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["lambda:InvokeFunction"],
+                    resources=[router_invoke_arn],
+                )
+            )
+
         # -----------------------------------------------------------------
         # IAM Role 3: Deliver Lambda
         # -----------------------------------------------------------------
@@ -372,6 +394,8 @@ class ComputeStack(Stack):
             "MONTHLY_BUDGET_USD": str(monthly_budget_usd),
             "ENABLE_EMR": "true" if enable_emr else "false",
         }
+        if router_invoke_arn:
+            common_env["ROUTER_INVOKE_ARN"] = router_invoke_arn
 
         # Upload profiles JSON to S3 — full profile data exceeds Lambda 4KB env-var limit.
         # Tool Lambdas read via PROFILES_S3_URI at first invocation.
@@ -406,6 +430,7 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=128,
             environment=common_env,
+            log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
         spend_table.grant_read_data(check_budget_fn)
@@ -428,6 +453,7 @@ class ComputeStack(Stack):
             timeout=Duration.minutes(5),
             memory_size=512,
             environment=extract_env,
+            log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
         compute_bucket.grant_write(extract_fn)
@@ -474,6 +500,7 @@ class ComputeStack(Stack):
             memory_size=3008,
             role=runner_role,
             environment=common_env,
+            log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
 
@@ -494,6 +521,7 @@ class ComputeStack(Stack):
                 **common_env,
                 "MANIFEST_BUCKET": compute_bucket.bucket_name,
             },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
 
@@ -510,6 +538,7 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=128,
             environment=common_env,
+            log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
         spend_table.grant_write_data(record_spend_fn)
@@ -535,6 +564,7 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=128,
             environment=common_env,
+            log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
 
@@ -551,6 +581,7 @@ class ComputeStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=128,
             environment=common_env,
+            log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
         compute_bucket.grant_put(audit_log_fn)
@@ -874,8 +905,116 @@ class ComputeStack(Stack):
 
         extract_task.next(route_compute)
         compute_lambda_task.next(deliver_task)
-        deliver_task.next(record_spend_task)
+
+        # -----------------------------------------------------------------
+        # Issue #55: Job chaining — HasChainProfile choice after DeliverResults
+        # When $.chain_profile is present, reshape state and run a second
+        # compute+deliver pass before RecordSpend.
+        # -----------------------------------------------------------------
+        has_chain = sfn.Choice(self, "HasChainProfile")
+
+        prepare_chain = sfn.Pass(
+            self,
+            "PrepareChainInput",
+            parameters={
+                "execution_id.$": "$.execution_id",
+                "user_arn.$": "$.user_arn",
+                "profile.$": "$.chain_profile",
+                "parameters.$": "$.parameters",
+                "chain_step": "profile_2",
+                "first_deliver.$": "$.deliver",
+                "extract": {
+                    "input_s3_uri.$": "$.compute.result_s3_uri",
+                    "columns.$": "$.compute.columns",
+                },
+            },
+        )
+
+        compute_chain_task = tasks.LambdaInvoke(
+            self,
+            "ChainComputeLambdaTask",
+            lambda_function=runner_fn,
+            result_path="$.compute",
+            payload_response_only=True,
+            timeout=Duration.minutes(15),
+            retry_on_service_exceptions=False,
+        )
+        compute_chain_task.add_retry(
+            errors=["Lambda.TooManyRequestsException"],
+            max_attempts=2,
+            interval=Duration.seconds(5),
+            backoff_rate=2,
+        )
+        compute_chain_task.add_catch(
+            handler=handle_failure_task,
+            errors=["States.ALL"],
+            result_path="$.error_info",
+        )
+
+        deliver_chain_task = tasks.LambdaInvoke(
+            self,
+            "DeliverChainResultsTask",
+            lambda_function=deliver_fn,
+            result_path="$.deliver",
+            payload_response_only=True,
+            timeout=Duration.minutes(2),
+        )
+        deliver_chain_task.add_catch(
+            handler=handle_failure_task,
+            errors=["States.ALL"],
+            result_path="$.error_info",
+        )
+
+        prepare_chain.next(compute_chain_task)
+        compute_chain_task.next(deliver_chain_task)
+        deliver_chain_task.next(record_spend_task)
+
+        has_chain.when(sfn.Condition.is_present("$.chain_profile"), prepare_chain)
+        has_chain.otherwise(record_spend_task)
+
+        deliver_task.next(has_chain)
         record_spend_task.next(notify_success)
+
+        # -----------------------------------------------------------------
+        # Issue #74: Explicit Step Functions execution role scoped to
+        # only the Lambda functions and SNS topic used in this state machine.
+        # CDK's default auto-generated role is over-broad.
+        # -----------------------------------------------------------------
+        sfn_lambda_arns = [
+            check_budget_fn.function_arn,
+            extract_fn.function_arn,
+            runner_fn.function_arn,
+            deliver_fn.function_arn,
+            record_spend_fn.function_arn,
+            handle_failure_fn.function_arn,
+            audit_log_fn.function_arn,
+        ]
+
+        sfn_role = iam.Role(
+            self,
+            "StateMachineRole",
+            role_name=f"{prefix}-sfn-role",
+            assumed_by=iam.ServicePrincipal("states.amazonaws.com"),
+        )
+        sfn_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["lambda:InvokeFunction"],
+                resources=sfn_lambda_arns,
+            )
+        )
+        sfn_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["sns:Publish"],
+                resources=[notification_topic.topic_arn],
+            )
+        )
+        if enable_emr:
+            sfn_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["emr-serverless:StartJobRun", "emr-serverless:GetJobRun"],
+                    resources=["*"],
+                )
+            )
 
         state_machine = sfn.StateMachine(
             self,
@@ -883,6 +1022,7 @@ class ComputeStack(Stack):
             state_machine_name=f"{prefix}-job",
             definition_body=sfn.DefinitionBody.from_chainable(chain),
             timeout=Duration.hours(4),
+            role=sfn_role,
         )
 
         # -----------------------------------------------------------------
@@ -902,6 +1042,7 @@ class ComputeStack(Stack):
                 **common_env,
                 "PROFILES_S3_URI": profiles_s3_uri,
             },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
         )
 
         # -----------------------------------------------------------------
@@ -912,6 +1053,7 @@ class ComputeStack(Stack):
             "PROFILES_S3_URI": profiles_s3_uri,
             "STATE_MACHINE_ARN": state_machine.state_machine_arn,
             "MAX_CONCURRENT_JOBS_PER_USER": str(self.node.try_get_context("max_concurrent_jobs_per_user") or "2"),
+            "COMPUTE_ALLOWED_BUCKETS": str(self.node.try_get_context("compute_allowed_buckets") or ""),
         }
         if router_spend_table_arn:
             # Issue #23: cross-stack router spend table name derived from ARN
@@ -929,6 +1071,7 @@ class ComputeStack(Stack):
             memory_size=256,
             role=tool_role,
             environment=run_env,
+            log_retention=logs.RetentionDays.THREE_MONTHS,
         )
         state_machine.grant_start_execution(run_fn)
 
@@ -967,6 +1110,7 @@ class ComputeStack(Stack):
                 **common_env,
                 "STATE_MACHINE_ARN": state_machine.state_machine_arn,
             },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
         )
         status_fn.add_to_role_policy(
             iam.PolicyStatement(
@@ -1002,6 +1146,7 @@ class ComputeStack(Stack):
             environment={
                 **common_env,
             },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
         )
         history_table.grant_read_data(history_fn)
 
@@ -1022,6 +1167,7 @@ class ComputeStack(Stack):
                 **common_env,
                 "STATE_MACHINE_ARN": state_machine.state_machine_arn,
             },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
         )
         cancel_fn.add_to_role_policy(
             iam.PolicyStatement(
@@ -1056,6 +1202,7 @@ class ComputeStack(Stack):
             environment={
                 **common_env,
             },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
         )
         snapshots_table.grant_read_data(snapshots_fn)
 
@@ -1075,6 +1222,7 @@ class ComputeStack(Stack):
             environment={
                 **common_env,
             },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
         )
         snapshots_table.grant_read_data(compare_fn)
         compare_fn.add_to_role_policy(
@@ -1085,12 +1233,111 @@ class ComputeStack(Stack):
         )
 
         # -----------------------------------------------------------------
+        # Issue #56: EventBridge Scheduler — scheduled compute jobs
+        # DynamoDB table, Scheduler group, trigger Lambda, schedule tool Lambda
+        # -----------------------------------------------------------------
+        schedules_table = dynamodb.Table(
+            self,
+            "SchedulesTable",
+            table_name=f"{prefix}-schedules",
+            partition_key=dynamodb.Attribute(
+                name="user_arn", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="schedule_name", type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.RETAIN,
+            point_in_time_recovery=True,
+            deletion_protection=True,
+        )
+
+        scheduler_group = scheduler.CfnScheduleGroup(
+            self,
+            "SchedulerGroup",
+            name=f"{prefix}-scheduler-group",
+        )
+
+        # IAM role: EventBridge Scheduler → trigger Lambda
+        scheduler_invoke_role = iam.Role(
+            self,
+            "SchedulerInvokeRole",
+            role_name=f"{prefix}-scheduler-invoke-role",
+            assumed_by=iam.ServicePrincipal("scheduler.amazonaws.com"),
+        )
+
+        schedule_trigger_fn = lambda_.Function(
+            self,
+            "ScheduleTriggerFunction",
+            function_name=f"{prefix}-schedule-trigger",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambdas/compute-schedule-trigger"),
+            timeout=Duration.seconds(30),
+            memory_size=128,
+            environment={
+                **common_env,
+                "SCHEDULES_TABLE": schedules_table.table_name,
+                "STATE_MACHINE_ARN": state_machine.state_machine_arn,
+            },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
+        )
+        schedules_table.grant_read_data(schedule_trigger_fn)
+        state_machine.grant_start_execution(schedule_trigger_fn)
+
+        # Grant the EventBridge scheduler role permission to invoke the trigger Lambda
+        scheduler_invoke_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["lambda:InvokeFunction"],
+                resources=[schedule_trigger_fn.function_arn],
+            )
+        )
+
+        schedule_fn = lambda_.Function(
+            self,
+            "ComputeScheduleFunction",
+            function_name=f"{prefix}-compute-schedule",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambdas/compute-schedule"),
+            timeout=Duration.seconds(30),
+            memory_size=128,
+            role=tool_role,
+            environment={
+                **common_env,
+                "SCHEDULES_TABLE": schedules_table.table_name,
+                "SCHEDULER_GROUP_NAME": scheduler_group.name,
+                "SCHEDULER_ROLE_ARN": scheduler_invoke_role.role_arn,
+                "TRIGGER_LAMBDA_ARN": schedule_trigger_fn.function_arn,
+            },
+            log_retention=logs.RetentionDays.THREE_MONTHS,
+        )
+        schedules_table.grant_read_write_data(schedule_fn)
+        schedule_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "scheduler:CreateSchedule",
+                    "scheduler:DeleteSchedule",
+                    "scheduler:ListSchedules",
+                    "scheduler:GetSchedule",
+                ],
+                resources=["*"],
+            )
+        )
+        schedule_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["iam:PassRole"],
+                resources=[scheduler_invoke_role.role_arn],
+            )
+        )
+
+        # -----------------------------------------------------------------
         # AgentCore Gateway invoke permissions
         # -----------------------------------------------------------------
         gateway_role_arn = self.node.try_get_context("agentcore_gateway_role_arn")
         if gateway_role_arn:
             for fn in [profiles_fn, run_fn, status_fn, history_fn, cancel_fn,
-                       snapshots_fn, compare_fn]:
+                       snapshots_fn, compare_fn, schedule_fn]:
                 fn.add_permission(
                     "AgentCoreInvoke",
                     principal=iam.ArnPrincipal(gateway_role_arn),
@@ -1108,6 +1355,7 @@ class ComputeStack(Stack):
             "compute_cancel": cancel_fn.function_arn,
             "compute_snapshots": snapshots_fn.function_arn,
             "compute_compare": compare_fn.function_arn,
+            "compute_schedule": schedule_fn.function_arn,
         }
 
         for tool_name, arn_value in tool_arns.items():
