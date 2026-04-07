@@ -15,6 +15,7 @@ Called by runner/handler.py via entrypoints in config/profiles/*.json.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -44,6 +45,110 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     if len(parts) != 2 or not parts[1]:
         raise ValueError(f"script_uri must be s3://bucket/key (got '{uri}')")
     return parts[0], parts[1]
+
+
+_NETWORK_SCHEMES = ("http://", "https://", "ftp://", "s3://", "gs://", "az://")
+
+# pandas read_* methods that accept a URL as their first positional argument
+_PANDAS_NETWORK_METHODS = frozenset({
+    "read_csv", "read_json", "read_excel", "read_html", "read_sql",
+    "read_parquet", "read_pickle", "read_feather", "read_orc",
+    "read_fwf", "read_table", "read_clipboard",
+})
+
+_AST_FORBIDDEN_NAMES = frozenset({
+    "os", "sys", "subprocess", "socket", "urllib", "requests", "builtins",
+})
+
+_AST_FORBIDDEN_CALLS = frozenset({
+    "eval", "exec", "compile", "open", "__import__",
+})
+
+
+def _make_safe_pandas(pd_module):
+    """
+    Return a proxy object that wraps pandas and blocks URL-based read_* calls.
+
+    RestrictedPython blocks __import__ at AST level but cannot block method
+    calls on already-imported objects. This proxy intercepts every read_*
+    call and raises PermissionError when the first argument is a network URI.
+    In-memory sources (BytesIO, StringIO, DataFrame) are allowed.
+    """
+
+    class _SafePandasProxy:
+        def __getattr__(self, name):
+            attr = getattr(pd_module, name)
+            if name in _PANDAS_NETWORK_METHODS:
+                def _guarded(*args, **kwargs):
+                    if args:
+                        first = args[0]
+                        if isinstance(first, str) and any(
+                            first.lower().startswith(s) for s in _NETWORK_SCHEMES
+                        ):
+                            raise PermissionError(
+                                f"pd.{name}() with a network URI is not allowed "
+                                f"in the sandbox (got '{first[:60]}')"
+                            )
+                    path_arg = kwargs.get("filepath_or_buffer") or kwargs.get("path_or_buf")
+                    if isinstance(path_arg, str) and any(
+                        path_arg.lower().startswith(s) for s in _NETWORK_SCHEMES
+                    ):
+                        raise PermissionError(
+                            f"pd.{name}() with a network URI is not allowed "
+                            f"in the sandbox (got '{path_arg[:60]}')"
+                        )
+                    return attr(*args, **kwargs)
+                return _guarded
+            return attr
+
+        def __repr__(self):
+            return f"<SafePandasProxy wrapping {pd_module}>"
+
+    return _SafePandasProxy()
+
+
+def _analyze_generated_code(code: str) -> list[str]:
+    """
+    Static analysis of LLM-generated code before sandbox execution.
+
+    Returns a list of violation strings. An empty list means the code passed.
+    Detects:
+      - Import statements (sandbox provides everything; imports are unnecessary
+        and could indicate an attempted bypass)
+      - Dunder attribute traversal (e.g. df.__class__.__bases__)
+      - Calls to eval/exec/compile/open/__import__
+      - References to forbidden module names (os, sys, subprocess, etc.)
+    """
+    violations: list[str] = []
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        return [f"SyntaxError: {exc}"]
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+            )
+            violations.append(f"Import not allowed: {', '.join(names)}")
+
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("__"):
+                violations.append(
+                    f"Dunder attribute access not allowed: '.{node.attr}'"
+                )
+
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in _AST_FORBIDDEN_CALLS:
+                violations.append(f"Call to '{node.func.id}()' not allowed")
+
+        elif isinstance(node, ast.Name):
+            if node.id in _AST_FORBIDDEN_NAMES:
+                violations.append(f"Reference to '{node.id}' not allowed")
+
+    return violations
 
 
 def _build_safe_globals() -> dict:
@@ -81,7 +186,7 @@ def _build_safe_globals() -> dict:
             glb["__builtins__"][_name] = vars(builtins)[_name]
 
     # Data-science libraries available in the sandbox
-    glb["pd"] = pd
+    glb["pd"] = _make_safe_pandas(pd)
     glb["np"] = np
 
     # Optional heavy deps — fail gracefully if not present in deployment
@@ -302,6 +407,14 @@ def custom_generated_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> tu
         )
     if not generated_code or not isinstance(generated_code, str):
         raise ValueError(f"Router returned no usable code in response: {resp_body}")
+
+    # Issue #73: static analysis before execution — reject forbidden patterns
+    violations = _analyze_generated_code(generated_code)
+    if violations:
+        raise ValueError(
+            f"Generated code failed static analysis ({len(violations)} violation(s)): "
+            + "; ".join(violations[:5])
+        )
 
     # Write generated script to S3
     script_key = f"results/generated-scripts/{uuid.uuid4()}.py"

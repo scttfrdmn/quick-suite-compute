@@ -362,6 +362,80 @@ class TestComputeStatus:
         call_kwargs = mock_sfn.describe_execution.call_args[1]
         assert call_kwargs["executionArn"] == arn
 
+    # Issue #57: result summary from $.compute
+    def test_succeeded_includes_runner_summary(self):
+        from datetime import datetime, timezone
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = {
+            "status": "SUCCEEDED",
+            "executionArn": "arn:aws:states:us-east-1:123:execution:sm:job-abc",
+            "startDate": datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+            "stopDate": datetime(2024, 1, 1, 10, 0, 45, tzinfo=timezone.utc),
+            "output": json.dumps({
+                "deliver": {
+                    "dataset_id": "qs-compute-abc-ds",
+                    "result_dataset_name": "Clustering Result",
+                },
+                "compute": {
+                    "row_count": 1234,
+                    "columns": ["cluster_id", "x", "y"],
+                    "duration_seconds": 12.5,
+                    "metadata_s3_uri": "s3://bucket/results/job-abc/metadata.json",
+                },
+            }),
+        }
+        with patch.object(_status, "sfn", mock_sfn):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-abc"}, None
+            )
+        assert result["status"] == "SUCCEEDED"
+        assert "summary" in result
+        assert result["summary"]["row_count"] == 1234
+        assert result["summary"]["columns"] == ["cluster_id", "x", "y"]
+        assert result["summary"]["duration_seconds"] == 12.5
+        assert "metadata_s3_uri" in result["summary"]
+
+    def test_succeeded_message_includes_row_count(self):
+        from datetime import datetime, timezone
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = {
+            "status": "SUCCEEDED",
+            "executionArn": "arn:aws:states:us-east-1:123:execution:sm:job-abc",
+            "startDate": datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+            "stopDate": datetime(2024, 1, 1, 10, 0, 20, tzinfo=timezone.utc),
+            "output": json.dumps({
+                "deliver": {"dataset_id": "ds1", "result_dataset_name": "Result"},
+                "compute": {"row_count": 500, "columns": ["a", "b"]},
+            }),
+        }
+        with patch.object(_status, "sfn", mock_sfn):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-abc"}, None
+            )
+        assert "500" in result["message"]
+
+    def test_succeeded_without_compute_output_has_no_summary(self):
+        from datetime import datetime, timezone
+        mock_sfn = MagicMock()
+        mock_sfn.exceptions.ExecutionDoesNotExist = type("ExecutionDoesNotExist", (Exception,), {})
+        mock_sfn.describe_execution.return_value = {
+            "status": "SUCCEEDED",
+            "executionArn": "arn:aws:states:us-east-1:123:execution:sm:job-abc",
+            "startDate": datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+            "stopDate": datetime(2024, 1, 1, 10, 0, 5, tzinfo=timezone.utc),
+            "output": json.dumps({
+                "deliver": {"dataset_id": "ds1", "result_dataset_name": "Result"},
+            }),
+        }
+        with patch.object(_status, "sfn", mock_sfn):
+            result = _status.handler(
+                {"job_id": "arn:aws:states:us-east-1:123:execution:sm:job-abc"}, None
+            )
+        assert result["status"] == "SUCCEEDED"
+        assert "summary" not in result
+
 
 # ===========================================================================
 # check-budget

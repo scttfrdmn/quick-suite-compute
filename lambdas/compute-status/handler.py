@@ -125,6 +125,16 @@ def handler(event: dict, context) -> dict:
             if chain_spend:
                 result["total_cost_usd"] = float(chain_spend.get("total_cost_usd", 0))
 
+            # Issue #57: include runner diagnostics from $.compute
+            runner_out = output.get("compute", {})
+            if runner_out:
+                result["summary"] = {
+                    "row_count": runner_out.get("row_count"),
+                    "columns": runner_out.get("columns", []),
+                    "duration_seconds": runner_out.get("duration_seconds"),
+                    "metadata_s3_uri": runner_out.get("metadata_s3_uri"),
+                }
+
         except (json.JSONDecodeError, AttributeError):
             pass
 
@@ -145,9 +155,10 @@ def handler(event: dict, context) -> dict:
             except Exception:
                 pass  # non-fatal
 
+        row_count = result.get("summary", {}).get("row_count") if result.get("summary") else None
+        row_str = f"{row_count:,} rows in " if row_count else ""
         result["message"] = (
-            f"Job completed successfully in {elapsed:.0f}s. "
-            f"Results are available as a new Quick Sight dataset."
+            f"Job completed in {elapsed:.0f}s. {row_str}Results are available as a new Quick Sight dataset."
             if elapsed else "Job completed successfully."
         )
 

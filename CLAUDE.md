@@ -10,7 +10,7 @@ ephemeral Lambda (or EMR Serverless for Spark), and delivers results back
 as a Quick Sight dataset. The analyst never sees an instance, a cluster,
 or a console.
 
-Seven AgentCore Gateway Lambda targets:
+Eight AgentCore Gateway Lambda targets:
 
 | Tool | What It Does |
 |------|-------------|
@@ -21,6 +21,7 @@ Seven AgentCore Gateway Lambda targets:
 | `compute_cancel` | Abort a running job |
 | `compute_snapshots` | List a user's named result snapshots (v0.6.0) |
 | `compute_compare` | Diff two named snapshots by row set (v0.6.0) |
+| `compute_schedule` | Create, list, delete scheduled compute jobs via EventBridge Scheduler (v0.13.0) |
 
 **Async execution model.** `compute_run` returns a job ID immediately.
 Quick Suite's agent calls `compute_status` to poll. Most Lambda-backed

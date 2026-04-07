@@ -133,6 +133,54 @@ class TestComputeHistory:
             )
         assert "error" in result
 
+    def test_no_next_cursor_when_no_last_evaluated_key(self):
+        with patch.object(_history, "dynamodb", _mock_ddb(SAMPLE_ITEMS)):
+            result = _history.handler(
+                {"user_arn": "arn:aws:iam::123456789012:user/alice"}, None
+            )
+        assert "next_cursor" not in result
+
+    def test_next_cursor_returned_when_last_evaluated_key_present(self):
+        import base64
+        import json
+        last_key = {"user_arn": {"S": "arn:aws:iam::123456789012:user/alice"}, "started_at": {"S": "2026-01-01"}}
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value.query.return_value = {
+            "Items": SAMPLE_ITEMS,
+            "Count": len(SAMPLE_ITEMS),
+            "LastEvaluatedKey": last_key,
+        }
+        with patch.object(_history, "dynamodb", mock_ddb):
+            result = _history.handler(
+                {"user_arn": "arn:aws:iam::123456789012:user/alice"}, None
+            )
+        assert "next_cursor" in result
+        decoded = json.loads(base64.b64decode(result["next_cursor"]).decode())
+        assert decoded == last_key
+
+    def test_valid_cursor_passed_as_exclusive_start_key(self):
+        import base64
+        import json
+        start_key = {"user_arn": {"S": "arn:aws:iam::123456789012:user/alice"}, "started_at": {"S": "2026-01-01"}}
+        cursor = base64.b64encode(json.dumps(start_key).encode()).decode()
+        mock_ddb = _mock_ddb(SAMPLE_ITEMS)
+        with patch.object(_history, "dynamodb", mock_ddb):
+            _history.handler(
+                {"user_arn": "arn:aws:iam::123456789012:user/alice", "cursor": cursor}, None
+            )
+        call_kwargs = mock_ddb.Table.return_value.query.call_args[1]
+        assert call_kwargs.get("ExclusiveStartKey") == start_key
+
+    def test_malformed_cursor_silently_ignored(self):
+        mock_ddb = _mock_ddb(SAMPLE_ITEMS)
+        with patch.object(_history, "dynamodb", mock_ddb):
+            result = _history.handler(
+                {"user_arn": "arn:aws:iam::123456789012:user/alice", "cursor": "not-valid-base64!!!"}, None
+            )
+        call_kwargs = mock_ddb.Table.return_value.query.call_args[1]
+        assert "ExclusiveStartKey" not in call_kwargs
+        assert "error" not in result
+
 
 # ---------------------------------------------------------------------------
 # TestComputeCancel

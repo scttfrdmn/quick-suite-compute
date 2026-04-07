@@ -1422,3 +1422,145 @@ class TestCustomGeneratedHandler:
         with patch.dict(os.environ, env, clear=True):
             with pytest.raises(ValueError, match="ROUTER_INVOKE_ARN"):
                 self.handler(_make_df(x=[1]), {"objective": "do something"})
+
+
+# ===========================================================================
+# Issue #72: Pandas sandbox proxy — network read_* methods blocked
+# ===========================================================================
+
+class TestSafePandasProxy:
+    def setup_method(self):
+        from custom import _make_safe_pandas
+        import pandas as _pd
+        self.safe_pd = _make_safe_pandas(_pd)
+
+    def test_read_csv_with_http_url_raises(self):
+        with pytest.raises(PermissionError, match="not allowed"):
+            self.safe_pd.read_csv("http://evil.com/data.csv")
+
+    def test_read_csv_with_https_url_raises(self):
+        with pytest.raises(PermissionError, match="not allowed"):
+            self.safe_pd.read_csv("https://example.com/data.csv")
+
+    def test_read_json_with_http_url_raises(self):
+        with pytest.raises(PermissionError, match="not allowed"):
+            self.safe_pd.read_json("https://api.example.com/data.json")
+
+    def test_read_parquet_with_s3_url_raises(self):
+        with pytest.raises(PermissionError, match="not allowed"):
+            self.safe_pd.read_parquet("s3://bucket/data.parquet")
+
+    def test_read_csv_with_stringio_allowed(self):
+        import io
+        csv_data = "x,y\n1,2\n3,4\n"
+        result = self.safe_pd.read_csv(io.StringIO(csv_data))
+        assert list(result.columns) == ["x", "y"]
+        assert len(result) == 2
+
+    def test_dataframe_attribute_access_allowed(self):
+        df = self.safe_pd.DataFrame({"a": [1, 2, 3]})
+        assert len(df) == 3
+
+    def test_non_read_method_allowed(self):
+        # concat, merge, etc. are not blocked
+        import pandas as _pd
+        df = self.safe_pd.DataFrame({"a": [1, 2]})
+        result = self.safe_pd.concat([df, df])
+        assert len(result) == 4
+
+    def test_ftp_url_blocked(self):
+        with pytest.raises(PermissionError, match="not allowed"):
+            self.safe_pd.read_csv("ftp://files.example.com/data.csv")
+
+    def test_filepath_or_buffer_kwarg_blocked(self):
+        with pytest.raises(PermissionError, match="not allowed"):
+            self.safe_pd.read_csv(filepath_or_buffer="https://evil.com/data.csv")
+
+
+# ===========================================================================
+# Issue #73: AST static analysis — LLM-generated code gating
+# ===========================================================================
+
+class TestAnalyzeGeneratedCode:
+    def setup_method(self):
+        from custom import _analyze_generated_code
+        self.analyze = _analyze_generated_code
+
+    def test_clean_transform_passes(self):
+        code = "def transform(df):\n    return df.copy()\n"
+        violations = self.analyze(code)
+        assert violations == []
+
+    def test_import_statement_flagged(self):
+        code = "import os\ndef transform(df):\n    return df\n"
+        violations = self.analyze(code)
+        assert any("Import" in v for v in violations)
+
+    def test_from_import_flagged(self):
+        code = "from subprocess import run\ndef transform(df):\n    return df\n"
+        violations = self.analyze(code)
+        assert any("Import" in v for v in violations)
+
+    def test_dunder_attribute_flagged(self):
+        code = "def transform(df):\n    return df.__class__.__bases__\n"
+        violations = self.analyze(code)
+        assert any("__class__" in v or "Dunder" in v for v in violations)
+
+    def test_eval_call_flagged(self):
+        code = "def transform(df):\n    eval('1+1')\n    return df\n"
+        violations = self.analyze(code)
+        assert any("eval" in v for v in violations)
+
+    def test_exec_call_flagged(self):
+        code = "def transform(df):\n    exec('x=1')\n    return df\n"
+        violations = self.analyze(code)
+        assert any("exec" in v for v in violations)
+
+    def test_open_call_flagged(self):
+        code = "def transform(df):\n    open('/etc/passwd')\n    return df\n"
+        violations = self.analyze(code)
+        assert any("open" in v for v in violations)
+
+    def test_os_name_reference_flagged(self):
+        code = "def transform(df):\n    return os.getcwd()\n"
+        violations = self.analyze(code)
+        assert any("os" in v for v in violations)
+
+    def test_sys_name_reference_flagged(self):
+        code = "def transform(df):\n    sys.exit()\n    return df\n"
+        violations = self.analyze(code)
+        assert any("sys" in v for v in violations)
+
+    def test_syntax_error_reported(self):
+        violations = self.analyze("def transform(df:\n    return df\n")
+        assert any("SyntaxError" in v for v in violations)
+
+    def test_multiple_violations_reported(self):
+        code = "import os\nimport sys\ndef transform(df):\n    return df\n"
+        violations = self.analyze(code)
+        assert len(violations) >= 2
+
+    def test_generated_code_rejected_before_execution(self):
+        """End-to-end: custom_generated_handler raises on code with forbidden import."""
+        import json as _json
+        from unittest.mock import MagicMock, patch
+
+        bad_code = "import os\ndef transform(df):\n    return df\n"
+        lambda_client = MagicMock()
+        payload_mock = MagicMock()
+        payload_mock.read.return_value = _json.dumps({"content": bad_code}).encode()
+        lambda_client.invoke.return_value = {"Payload": payload_mock, "StatusCode": 200}
+
+        from custom import custom_generated_handler
+        with (
+            patch("boto3.client", return_value=lambda_client),
+            patch.dict(os.environ, {
+                "ROUTER_INVOKE_ARN": "arn:aws:lambda:us-east-1:123:function:router",
+                "RESULTS_BUCKET": "bucket",
+            }),
+        ):
+            with pytest.raises(ValueError, match="static analysis"):
+                custom_generated_handler(
+                    _make_df(x=[1, 2]),
+                    {"objective": "list all files"},
+                )

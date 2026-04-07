@@ -10,6 +10,7 @@ Tool arguments:
   limit:    int (optional, 1–20, default 10) — max results to return
 """
 
+import base64
 import json
 import logging
 import os
@@ -44,13 +45,24 @@ def handler(event: dict, context) -> dict:
     except (TypeError, ValueError):
         limit = 10
 
+    cursor = (event.get("cursor") or "").strip()
+
+    query_kwargs: dict = {
+        "KeyConditionExpression": Key("user_arn").eq(user_arn),
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if cursor:
+        try:
+            query_kwargs["ExclusiveStartKey"] = json.loads(
+                base64.b64decode(cursor).decode()
+            )
+        except Exception:
+            pass  # ignore malformed cursor — start from beginning
+
     table = dynamodb.Table(HISTORY_TABLE)
     try:
-        resp = table.query(
-            KeyConditionExpression=Key("user_arn").eq(user_arn),
-            ScanIndexForward=False,
-            Limit=limit,
-        )
+        resp = table.query(**query_kwargs)
     except Exception as exc:
         logger.error(f"DynamoDB query failed: {exc}")
         return {"error": f"Failed to retrieve job history: {exc}"}
@@ -66,8 +78,14 @@ def handler(event: dict, context) -> dict:
             "status": item.get("status", ""),
         })
 
-    return {
+    result = {
         "user_arn": user_arn,
         "jobs": jobs,
         "count": len(jobs),
     }
+    last_key = resp.get("LastEvaluatedKey")
+    if last_key:
+        result["next_cursor"] = base64.b64encode(
+            json.dumps(last_key).encode()
+        ).decode()
+    return result

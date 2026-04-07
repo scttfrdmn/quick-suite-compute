@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-04-07
+
+### Security
+- Fixed EMR Serverless job role having unnecessary `s3:GetObject` on `results/*`: EMR jobs write result files but never need to read completed result files from other executions; removed `s3:GetObject` from the `results/*` policy statement, leaving only `s3:PutObject` (closes #77)
+
+### Fixed
+- Fixed `compute_history` returning no pagination cursor: handler now accepts optional `cursor` parameter (base64-encoded DynamoDB `ExclusiveStartKey`) and returns `next_cursor` in the response when more pages exist; malformed cursors are silently ignored (query starts from beginning); `limit` already clamped to 20 (closes #83)
+
+### Added
+- `tests/test_history_cancel.py`: 4 new cursor tests (`test_no_next_cursor_when_no_last_evaluated_key`, `test_next_cursor_returned_when_last_evaluated_key_present`, `test_valid_cursor_passed_as_exclusive_start_key`, `test_malformed_cursor_silently_ignored`)
+- `tests/test_stack.py`: EMR IAM policy regression test verifying `s3:GetObject` is absent from all `results/*` policy statements
+
 ## [0.14.0] - 2026-04-06
 
 ### Security
