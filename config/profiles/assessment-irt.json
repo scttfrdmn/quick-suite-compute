@@ -1,0 +1,21 @@
+{
+  "profile_id": "assessment-irt",
+  "display_name": "Item Response Theory (2PL)",
+  "description": "Fits a two-parameter logistic (2PL) IRT model to item-response data. Returns item difficulty and discrimination parameters, person ability estimates (theta), and item information functions. For exam validation, adaptive testing calibration, and bias detection (DIF).",
+  "category": "higher-ed",
+  "backend": "lambda",
+  "entrypoint": "higher_ed.assessment_irt_handler",
+  "parameters": {
+    "item_columns": {"type": "column_list", "min_columns": 5, "description": "Binary response columns (0/1) — one per assessment item"},
+    "person_id_column": {"type": "column", "description": "Column identifying each respondent"},
+    "ability_prior": {"type": "string", "default": "normal(0,1)", "description": "Prior distribution for ability estimates (default: normal(0,1))"}
+  },
+  "input_requirements": {"min_rows": 100, "max_rows": 50000, "required_column_types": ["integer"], "column_parameters": ["item_columns", "person_id_column"]},
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "extra_tables": ["item_parameters", "person_abilities", "item_information"]
+  },
+  "cost_estimate": {"typical_duration_seconds": 45, "typical_cost_usd": 0.002},
+  "tags": ["irt", "item-response-theory", "2pl", "assessment", "psychometrics", "exam", "calibration", "dif", "higher-ed"]
+}

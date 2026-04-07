@@ -1,0 +1,27 @@
+{
+  "profile_id": "intersectionality-equity",
+  "display_name": "Intersectionality Equity Analysis",
+  "description": "Cross-tabulates an outcome metric by multiple demographic dimensions simultaneously, computing Disparate Impact ratios and applying the 80% rule. Groups smaller than n_suppress are replaced with '<10' to protect privacy.",
+  "category": "higher-ed",
+  "backend": "lambda",
+  "entrypoint": "higher_ed.intersectionality_equity_handler",
+  "parameters": {
+    "metric_column": {"type": "column", "description": "Numeric outcome to disaggregate (e.g. gpa, graduation_rate, completion_pct)"},
+    "group_columns": {"type": "column_list", "min_columns": 2, "description": "Two or more demographic columns to cross-tabulate (e.g. pell_recipient, first_gen, ethnicity)"},
+    "reference_group": {"type": "string_list", "description": "Reference value per group_column in the same order (e.g. ['non-Pell', 'continuing-gen'])"},
+    "n_suppress": {"type": "integer", "default": 10, "min": 1, "description": "Suppress cell counts below this threshold (default 10)"}
+  },
+  "input_requirements": {"min_rows": 20, "max_rows": 500000, "required_column_types": ["numeric"], "column_parameters": ["metric_column", "group_columns"]},
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [
+      {"name": "group_key", "type": "string"},
+      {"name": "n", "type": "integer_or_suppressed"},
+      {"name": "group_mean", "type": "float"},
+      {"name": "di_ratio", "type": "float"},
+      {"name": "adverse_impact_flag", "type": "boolean"}
+    ]
+  },
+  "cost_estimate": {"typical_duration_seconds": 15, "typical_cost_usd": 0.0008},
+  "tags": ["equity", "intersectionality", "disparate-impact", "80-rule", "privacy", "higher-ed", "accreditation", "ir", "demographics"]
+}

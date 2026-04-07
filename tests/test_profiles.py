@@ -52,6 +52,9 @@ EXPECTED_PROFILE_IDS = {
     # v0.12.0 profiles
     "custom-python",
     "custom-generated",
+    # v0.15.0 profiles
+    "intersectionality-equity",
+    "assessment-irt",
 }
 
 
@@ -1564,3 +1567,196 @@ class TestAnalyzeGeneratedCode:
                     _make_df(x=[1, 2]),
                     {"objective": "list all files"},
                 )
+
+
+# ===========================================================================
+# v0.15.0 handler unit tests
+# ===========================================================================
+
+class TestIntersectionalityEquity:
+    def setup_method(self):
+        from higher_ed import intersectionality_equity_handler
+        self.handler = intersectionality_equity_handler
+
+    def _df(self, n=200):
+        rng = np.random.default_rng(42)
+        pell = (["pell"] * (n // 2) + ["non-pell"] * (n // 2))
+        first_gen = (["first-gen", "continuing-gen"] * (n // 2))[:n]
+        # pell+first-gen group has lower GPA on average → DI < 0.80
+        gpa = []
+        for p, f in zip(pell, first_gen):
+            if p == "pell" and f == "first-gen":
+                gpa.append(float(rng.normal(2.5, 0.3, 1)[0]))
+            else:
+                gpa.append(float(rng.normal(3.4, 0.3, 1)[0]))
+        return _make_df(gpa=gpa, pell=pell, first_gen=first_gen)
+
+    def test_happy_path(self):
+        df = self._df(200)
+        result = self.handler(df, {
+            "metric_column": "gpa",
+            "group_columns": ["pell", "first_gen"],
+            "reference_group": ["non-pell", "continuing-gen"],
+        })
+        assert "rows" in result
+        assert result["profile_id"] == "intersectionality-equity"
+        # Reference group should have DI ratio ~1.0
+        ref_row = next(
+            (r for r in result["rows"] if r["group_key"] == "non-pell|continuing-gen"), None
+        )
+        assert ref_row is not None
+        assert ref_row["di_ratio"] is not None
+        assert abs(ref_row["di_ratio"] - 1.0) < 0.05
+        # pell+first-gen group should be flagged
+        low_row = next(
+            (r for r in result["rows"] if r["group_key"] == "pell|first-gen"), None
+        )
+        assert low_row is not None
+        assert low_row["adverse_impact_flag"] is True
+
+    def test_suppression(self):
+        # Create a DataFrame where one cell has only 5 members
+        pell = ["pell"] * 5 + ["non-pell"] * 50
+        first_gen = ["first-gen"] * 5 + ["continuing-gen"] * 50
+        gpa = [2.5] * 5 + [3.5] * 50
+        df = _make_df(gpa=gpa, pell=pell, first_gen=first_gen)
+        result = self.handler(df, {
+            "metric_column": "gpa",
+            "group_columns": ["pell", "first_gen"],
+            "n_suppress": 10,
+        })
+        suppressed = [r for r in result["rows"] if isinstance(r["n"], str)]
+        assert len(suppressed) == 1
+        assert suppressed[0]["n"] == "<10"
+        assert suppressed[0]["group_mean"] is None
+        assert result["suppressed_cells"] == 1
+
+    def test_adverse_impact_flag(self):
+        # di_ratio 0.75 → flag True; di_ratio 0.85 → flag False
+        ref_mean = 4.0
+        # Group A: mean = 3.0 → di = 0.75 → flag True
+        # Group B: mean = 3.4 → di = 0.85 → flag False
+        pell = ["A"] * 30 + ["B"] * 30 + ["ref"] * 30
+        first_gen = ["x"] * 90
+        gpa = [3.0] * 30 + [3.4] * 30 + [4.0] * 30
+        df = _make_df(gpa=gpa, pell=pell, first_gen=first_gen)
+        result = self.handler(df, {
+            "metric_column": "gpa",
+            "group_columns": ["pell", "first_gen"],
+            "reference_group": ["ref", "x"],
+        })
+        row_a = next(r for r in result["rows"] if r["group_key"] == "A|x")
+        row_b = next(r for r in result["rows"] if r["group_key"] == "B|x")
+        assert row_a["adverse_impact_flag"] is True
+        assert row_b["adverse_impact_flag"] is False
+
+    def test_min_columns_validation(self):
+        df = _make_df(gpa=[3.0] * 30, pell=["yes"] * 30)
+        result = self.handler(df, {
+            "metric_column": "gpa",
+            "group_columns": ["pell"],
+        })
+        assert "error" in result
+        assert "2 columns" in result["error"]
+
+    def test_overall_mean_reference(self):
+        # No reference_group → uses overall mean
+        df = self._df(200)
+        result = self.handler(df, {
+            "metric_column": "gpa",
+            "group_columns": ["pell", "first_gen"],
+        })
+        assert "rows" in result
+        # reference_group_mean should equal overall mean of gpa
+        overall = round(float(df["gpa"].mean()), 4)
+        assert abs(result["reference_group_mean"] - overall) < 0.001
+
+
+class TestAssessmentIRT:
+    def setup_method(self):
+        from higher_ed import assessment_irt_handler
+        self.handler = assessment_irt_handler
+
+    def _df(self, n=150, n_items=7):
+        rng = np.random.default_rng(99)
+        data = {f"item_{i}": rng.integers(0, 2, n).tolist() for i in range(n_items)}
+        data["person_id"] = list(range(n))
+        return _make_df(**data)
+
+    def _mock_girth(self, n_items=7, n_persons=150):
+        """Return a mock girth module with twopl_mml and ability_eap."""
+        import types
+        from unittest.mock import MagicMock
+
+        mock_girth = types.ModuleType("girth")
+        difficulties = np.zeros(n_items)
+        discriminations = np.ones(n_items)
+        mock_girth.twopl_mml = MagicMock(
+            return_value={"Difficulty": difficulties, "Discrimination": discriminations}
+        )
+        thetas = np.zeros(n_persons)
+        ses = np.ones(n_persons) * 0.3
+        mock_girth.ability_eap = MagicMock(return_value=(thetas, ses))
+        return mock_girth
+
+    def test_happy_path(self):
+        df = self._df()
+        item_cols = [f"item_{i}" for i in range(7)]
+        mock_girth = self._mock_girth(n_items=7, n_persons=150)
+        with patch.dict(sys.modules, {"girth": mock_girth}):
+            result = self.handler(df, {
+                "item_columns": item_cols,
+                "person_id_column": "person_id",
+            })
+        assert "item_parameters" in result
+        assert "person_abilities" in result
+        assert "item_information" in result
+        assert result["profile_id"] == "assessment-irt"
+        assert len(result["item_parameters"]) == 7
+        assert len(result["person_abilities"]) == 150
+
+    def test_min_columns_validation(self):
+        df = self._df(n_items=3)
+        result = self.handler(df, {
+            "item_columns": [f"item_{i}" for i in range(3)],
+            "person_id_column": "person_id",
+        })
+        assert "error" in result
+        assert "5 columns" in result["error"]
+
+    def test_min_rows_validation(self):
+        df = self._df(n=50, n_items=5)
+        result = self.handler(df, {
+            "item_columns": [f"item_{i}" for i in range(5)],
+            "person_id_column": "person_id",
+        })
+        assert "error" in result
+        assert "100 rows" in result["error"]
+
+    def test_girth_not_available(self):
+        df = self._df()
+        item_cols = [f"item_{i}" for i in range(7)]
+        # Remove girth from sys.modules if present, and block the import
+        with patch.dict(sys.modules, {"girth": None}):
+            result = self.handler(df, {
+                "item_columns": item_cols,
+                "person_id_column": "person_id",
+            })
+        assert "error" in result
+        assert result.get("requires_layer") == "girth"
+
+    def test_item_information_keys(self):
+        df = self._df()
+        item_cols = [f"item_{i}" for i in range(7)]
+        mock_girth = self._mock_girth(n_items=7, n_persons=150)
+        with patch.dict(sys.modules, {"girth": mock_girth}):
+            result = self.handler(df, {
+                "item_columns": item_cols,
+                "person_id_column": "person_id",
+            })
+        for entry in result["item_information"]:
+            assert "item" in entry
+            assert "theta_range" in entry
+            assert "information" in entry
+            assert len(entry["theta_range"]) == 7
+            assert len(entry["information"]) == 7

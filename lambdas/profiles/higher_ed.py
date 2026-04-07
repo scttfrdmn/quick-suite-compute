@@ -338,3 +338,189 @@ def peer_benchmark_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> tupl
         f"peer-benchmark complete: {n_peers} peers, {len(metric_cols)} metrics, focal={focal_id}"
     )
     return result, diagnostics
+
+
+# ---------------------------------------------------------------------------
+# intersectionality-equity
+# ---------------------------------------------------------------------------
+
+def intersectionality_equity_handler(df, params):
+    """
+    Cross-tabulate an outcome metric by multiple demographic dimensions and
+    compute Disparate Impact ratios using the 80% rule.
+
+    Cells with n < n_suppress are redacted to protect privacy.
+
+    Returns a plain dict (not a DataFrame tuple) because the output is a
+    variable-length cell table rather than a row-level annotation.
+    """
+    metric_col = params.get("metric_column", "")
+    group_cols = params.get("group_columns") or []
+    reference_group = params.get("reference_group") or []
+    n_suppress = int(params.get("n_suppress", 10))
+
+    if isinstance(group_cols, str):
+        group_cols = [group_cols]
+    if len(group_cols) < 2:
+        return {"error": "group_columns requires at least 2 columns"}
+    if not metric_col or metric_col not in df.columns:
+        return {"error": f"metric_column '{metric_col}' not found or not in dataset"}
+    if not pd.api.types.is_numeric_dtype(df[metric_col]):
+        return {"error": f"metric_column '{metric_col}' must be numeric"}
+
+    clean = df[group_cols + [metric_col]].dropna(subset=[metric_col])
+
+    # Overall mean used as fallback reference
+    overall_mean = float(clean[metric_col].mean()) if len(clean) > 0 else 0.0
+
+    # Compute per-cell stats
+    grouped = (
+        clean.groupby(group_cols)[metric_col]
+        .agg(["count", "mean"])
+        .reset_index()
+    )
+    grouped.columns = list(group_cols) + ["n", "group_mean"]
+
+    # Identify reference cell
+    reference_mean = overall_mean
+    if reference_group and len(reference_group) == len(group_cols):
+        mask = pd.Series([True] * len(grouped), index=grouped.index)
+        for col, val in zip(group_cols, reference_group):
+            mask &= grouped[col].astype(str) == str(val)
+        ref_rows = grouped[mask]
+        if not ref_rows.empty:
+            reference_mean = float(ref_rows["group_mean"].iloc[0])
+        else:
+            logger.warning(
+                "reference_group values not found in data; falling back to overall mean"
+            )
+
+    rows = []
+    suppressed_count = 0
+    for _, row in grouped.iterrows():
+        group_vals = [row[c] for c in group_cols]
+        group_key = "|".join(str(v) for v in group_vals)
+        n = int(row["n"])
+        gm = float(row["group_mean"])
+
+        if n < n_suppress:
+            suppressed_count += 1
+            rows.append({
+                "group_key": group_key,
+                "n": f"<{n_suppress}",
+                "group_mean": None,
+                "di_ratio": None,
+                "adverse_impact_flag": None,
+            })
+        else:
+            if reference_mean != 0:
+                di_ratio = round(gm / reference_mean, 4)
+                adverse_impact_flag = di_ratio < 0.80
+            else:
+                di_ratio = None
+                adverse_impact_flag = None
+            rows.append({
+                "group_key": group_key,
+                "n": n,
+                "group_mean": round(gm, 4),
+                "di_ratio": di_ratio,
+                "adverse_impact_flag": adverse_impact_flag,
+            })
+
+    logger.info(
+        f"intersectionality-equity complete: metric={metric_col}, "
+        f"group_cols={group_cols}, cells={len(rows)}, suppressed={suppressed_count}"
+    )
+    return {
+        "rows": rows,
+        "suppressed_cells": suppressed_count,
+        "reference_group_mean": round(reference_mean, 4),
+        "profile_id": "intersectionality-equity",
+    }
+
+
+# ---------------------------------------------------------------------------
+# assessment-irt
+# ---------------------------------------------------------------------------
+
+def assessment_irt_handler(df, params):
+    """
+    Fit a two-parameter logistic (2PL) IRT model to binary item-response data.
+
+    Requires the optional 'girth' library (installed as a Lambda Layer).
+    Returns item parameters, person ability estimates, and item information
+    functions evaluated over a standard theta grid.
+    """
+    import math
+
+    item_columns = params.get("item_columns") or []
+    person_id_column = params.get("person_id_column", "")
+
+    if isinstance(item_columns, str):
+        item_columns = [item_columns]
+    if len(item_columns) < 5:
+        return {"error": "item_columns requires at least 5 columns"}
+    if len(df) < 100:
+        return {"error": f"assessment-irt requires at least 100 rows; got {len(df)}"}
+
+    try:
+        import girth  # noqa: PLC0415
+    except ImportError:
+        return {"error": "IRT library not available in this deployment", "requires_layer": "girth"}
+
+    exp = math.exp
+
+    # Build response matrix: persons × items, then transpose to items × persons
+    data = df[item_columns].to_numpy(dtype=float)
+    data_T = data.T
+
+    # Fit 2PL model
+    result = girth.twopl_mml(data_T)
+    difficulties = result["Difficulty"]
+    discriminations = result["Discrimination"]
+
+    # EAP person ability estimates
+    thetas, ses = girth.ability_eap(data_T, discriminations, difficulties)
+
+    # Item information at a grid of theta values
+    theta_grid = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+
+    def _item_info(a, b, theta):
+        p = 1.0 / (1.0 + exp(-a * (theta - b)))
+        return a ** 2 * p * (1.0 - p)
+
+    item_parameters = [
+        {
+            "item": col,
+            "difficulty": float(b),
+            "discrimination": float(a),
+            "info_at_zero": float(_item_info(a, b, 0.0)),
+        }
+        for col, a, b in zip(item_columns, discriminations, difficulties)
+    ]
+
+    person_id_col = person_id_column if person_id_column and person_id_column in df.columns else None
+    person_ids = df[person_id_col].tolist() if person_id_col else list(range(len(df)))
+    person_abilities = [
+        {"person_id": pid, "theta": float(t), "se": float(s)}
+        for pid, t, s in zip(person_ids, thetas, ses)
+    ]
+
+    item_information = [
+        {
+            "item": col,
+            "theta_range": theta_grid,
+            "information": [float(_item_info(a, b, th)) for th in theta_grid],
+        }
+        for col, a, b in zip(item_columns, discriminations, difficulties)
+    ]
+
+    logger.info(
+        f"assessment-irt complete: {len(item_columns)} items, {len(df)} persons"
+    )
+    return {
+        "item_parameters": item_parameters,
+        "person_abilities": person_abilities,
+        "item_information": item_information,
+        "profile_id": "assessment-irt",
+    }

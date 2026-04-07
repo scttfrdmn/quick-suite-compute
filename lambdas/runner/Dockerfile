@@ -18,7 +18,8 @@ RUN pip install --no-cache-dir \
     xarray==2024.10.0 \
     netCDF4==1.7.2 \
     pypdf==5.1.0 \
-    RestrictedPython==7.3
+    RestrictedPython==7.3 \
+    girth==0.8.0
 
 # Copy runner handler and profile modules (build context is lambdas/)
 COPY runner/handler.py ${LAMBDA_TASK_ROOT}/
