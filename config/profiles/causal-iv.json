@@ -1,0 +1,23 @@
+{
+  "profile_id": "causal-iv",
+  "display_name": "Instrumental Variables (2SLS)",
+  "description": "Two-stage least squares instrumental variables estimation for causal inference. Addresses endogeneity by using an instrument that affects treatment but not outcomes directly. Returns LATE, first-stage F-statistic, and confidence intervals.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "causal.causal_iv_handler",
+  "parameters": {
+    "outcome_var": {"type": "column", "description": "Outcome variable to analyze"},
+    "treatment_var": {"type": "column", "description": "Endogenous treatment variable"},
+    "instrument_var": {"type": "column", "description": "Instrumental variable (must satisfy relevance + exclusion restriction)"},
+    "control_vars": {"type": "column_list", "description": "Optional control variables", "min_columns": 0},
+    "peer_benchmark": {"type": "boolean", "default": false, "description": "Annotate result with peer institution comparison"}
+  },
+  "input_requirements": {"min_rows": 50, "max_rows": 500000, "required_column_types": ["numeric"]},
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "extra_tables": []
+  },
+  "cost_estimate": {"typical_duration_seconds": 20, "typical_cost_usd": 0.001},
+  "tags": ["causal-inference", "instrumental-variables", "2sls", "econometrics", "research", "higher-ed"]
+}

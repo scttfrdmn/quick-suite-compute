@@ -1,0 +1,24 @@
+{
+  "profile_id": "causal-did",
+  "display_name": "Difference-in-Differences",
+  "description": "Estimates program impacts by comparing treated and control groups before and after an intervention. Includes parallel trends test, event study plot data, and placebo tests. Supports standard 2x2 DiD and staggered adoption (requires csdid layer).",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "causal.causal_did_handler",
+  "parameters": {
+    "outcome_var": {"type": "column", "description": "Outcome variable"},
+    "treatment_group_var": {"type": "column", "description": "Binary indicator for treatment group (1) vs control (0)"},
+    "time_var": {"type": "column", "description": "Time period identifier column"},
+    "pre_period": {"type": "string_list", "description": "List of pre-treatment period values"},
+    "post_period": {"type": "string_list", "description": "List of post-treatment period values"},
+    "staggered": {"type": "boolean", "default": false, "description": "Use Callaway-Sant'Anna staggered adoption estimator (requires csdid layer)"}
+  },
+  "input_requirements": {"min_rows": 20, "max_rows": 500000, "required_column_types": ["numeric"]},
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "extra_tables": []
+  },
+  "cost_estimate": {"typical_duration_seconds": 25, "typical_cost_usd": 0.001},
+  "tags": ["causal-inference", "difference-in-differences", "did", "program-evaluation", "research", "higher-ed"]
+}

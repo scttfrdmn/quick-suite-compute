@@ -1,0 +1,20 @@
+{
+  "profile_id": "provenance-graph",
+  "display_name": "Data Provenance Graph",
+  "description": "Reconstructs complete data lineage for an S3 artifact from compute job history. Returns a W3C PROV-DM JSON-LD graph, a Markdown lineage summary, and a gap report identifying chain breaks. Foundational for reproducibility pre-flight checks.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "research.provenance_graph_handler",
+  "parameters": {
+    "artifact_uri": {"type": "string", "description": "S3 URI of the artifact to trace lineage for"},
+    "lookback_days": {"type": "integer", "default": 365, "min": 1, "description": "How many days back to search job history"}
+  },
+  "input_requirements": {"min_rows": 0, "max_rows": 0, "required_column_types": []},
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "extra_tables": []
+  },
+  "cost_estimate": {"typical_duration_seconds": 5, "typical_cost_usd": 0.0003},
+  "tags": ["provenance", "lineage", "reproducibility", "audit", "research", "prov-dm"]
+}

@@ -43,8 +43,8 @@ class TestComputeStackSynthesis:
         template.resource_count_is("AWS::S3::Bucket", 1)
 
     def test_dynamodb_tables_created(self, template):
-        # spend, history, snapshots, schedules (#56)
-        template.resource_count_is("AWS::DynamoDB::Table", 4)
+        # spend, history, snapshots, schedules (#56), peer-cohort-cache (#68)
+        template.resource_count_is("AWS::DynamoDB::Table", 5)
 
     def test_sns_topic_created(self, template):
         template.resource_count_is("AWS::SNS::Topic", 1)

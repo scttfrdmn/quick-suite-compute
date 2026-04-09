@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-07
+
+### Added
+- `causal-iv` profile: Two-stage least squares (2SLS) instrumental variables estimation; first-stage F-stat, LATE, 95% CI, compliance rate; weak instrument warning (F<10); optional `peer_benchmark` annotation; uses `linearmodels` (included in runner Docker image) (#63)
+- `causal-rd` profile: Regression discontinuity at policy thresholds; sharp and fuzzy variants; Imbens-Kalyanaraman optimal bandwidth; bandwidth sensitivity table (5 points); McCrary density test for manipulation detection; numpy-native implementation (#64)
+- `causal-did` profile: Difference-in-differences with parallel trends test, event study plot data, and placebo tests; staggered adoption via `csdid` layer (graceful 503 if absent) (#65)
+- `grant-pipeline` profile: PI-level portfolio health scoring (health_score, NCE risk, funding gap months); sponsor timing analysis when submission dates provided; "Grant Cliff Detector" for upcoming funding gaps (#66)
+- `provenance-graph` profile: W3C PROV-DM JSON-LD lineage reconstruction from HistoryTable; Markdown summary; gap detection for chain breaks; `artifact_uri` as input, no DataFrame required (#67)
+- `peer_cohort` utility module: Identifies peer institutions by Carnegie class, enrollment ±20%, control type, Pell ±10 pts; 30-day DynamoDB cache (`qs-compute-peer-cohort-cache` table) (#68)
+- Runner `handler.py` plain-dict coercion: Plain-dict-returning handlers now work correctly through the full Step Functions pipeline (fixes latent bug for assessment-irt, intersectionality-equity, all causal profiles)
+- 28 new tests (TestRunnerDispatchPlainDict, TestPeerCohort, TestCausalIV, TestCausalRD, TestCausalDiD, TestGrantPipeline, TestProvenanceGraph)
+
 ## [0.14.1] - 2026-04-07
 
 ### Security

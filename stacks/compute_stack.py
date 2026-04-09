@@ -214,6 +214,23 @@ class ComputeStack(Stack):
         )
 
         # -----------------------------------------------------------------
+        # DynamoDB: Peer Cohort Cache (v0.16.0)
+        # -----------------------------------------------------------------
+        peer_cohort_table = dynamodb.Table(
+            self,
+            "PeerCohortCacheTable",
+            table_name="qs-compute-peer-cohort-cache",
+            partition_key=dynamodb.Attribute(
+                name="unit_id", type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.RETAIN,
+            point_in_time_recovery=True,
+            deletion_protection=True,
+            time_to_live_attribute="ttl",
+        )
+
+        # -----------------------------------------------------------------
         # DynamoDB: Named Result Snapshots (Issue 19)
         # -----------------------------------------------------------------
         snapshots_table = dynamodb.Table(
@@ -349,6 +366,9 @@ class ComputeStack(Stack):
                 )
             )
 
+        # v0.16.0: peer cohort cache read/write for peer_cohort module
+        peer_cohort_table.grant_read_write_data(runner_role)
+
         # -----------------------------------------------------------------
         # IAM Role 3: Deliver Lambda
         # -----------------------------------------------------------------
@@ -393,6 +413,8 @@ class ComputeStack(Stack):
             "QUICKSIGHT_USER": qs_user,
             "MONTHLY_BUDGET_USD": str(monthly_budget_usd),
             "ENABLE_EMR": "true" if enable_emr else "false",
+            "PEER_COHORT_TABLE": peer_cohort_table.table_name,
+            "COMPUTE_HISTORY_TABLE": history_table.table_name,
         }
         if router_invoke_arn:
             common_env["ROUTER_INVOKE_ARN"] = router_invoke_arn

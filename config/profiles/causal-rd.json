@@ -1,0 +1,24 @@
+{
+  "profile_id": "causal-rd",
+  "display_name": "Regression Discontinuity Design",
+  "description": "Estimates local average treatment effects at a policy threshold using regression discontinuity. Supports sharp RD (deterministic assignment) and fuzzy RD (probabilistic). Includes bandwidth sensitivity analysis and McCrary density test for manipulation detection.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "causal.causal_rd_handler",
+  "parameters": {
+    "outcome_var": {"type": "column", "description": "Outcome variable"},
+    "running_var": {"type": "column", "description": "Running (forcing) variable — assignment determined by threshold"},
+    "cutoff": {"type": "number", "description": "Threshold value of running_var that determines treatment"},
+    "bandwidth": {"type": "string", "default": "optimal", "description": "Bandwidth around cutoff: 'optimal' (Imbens-Kalyanaraman) or numeric value"},
+    "rd_type": {"type": "string", "default": "sharp", "description": "RD type: 'sharp' or 'fuzzy'"},
+    "treatment_var": {"type": "column", "description": "Treatment indicator column (required for fuzzy RD)"}
+  },
+  "input_requirements": {"min_rows": 20, "max_rows": 500000, "required_column_types": ["numeric"]},
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "extra_tables": []
+  },
+  "cost_estimate": {"typical_duration_seconds": 15, "typical_cost_usd": 0.0008},
+  "tags": ["causal-inference", "regression-discontinuity", "rd", "policy-evaluation", "research", "higher-ed"]
+}

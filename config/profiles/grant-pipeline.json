@@ -1,0 +1,25 @@
+{
+  "profile_id": "grant-pipeline",
+  "display_name": "Grant Pipeline Health",
+  "description": "Analyzes research grant portfolio health for each PI. Detects upcoming funding gaps, scores No-Cost Extension (NCE) risk, computes portfolio health scores, and identifies sponsor-specific submission timing patterns. The 'Grant Cliff Detector' flags PIs with grants ending and no follow-on awards.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "research.grant_pipeline_handler",
+  "parameters": {
+    "pi_column": {"type": "column", "description": "Principal investigator identifier column"},
+    "start_date_column": {"type": "column", "description": "Award start date column"},
+    "end_date_column": {"type": "column", "description": "Award end date column"},
+    "amount_column": {"type": "column", "description": "Award amount column"},
+    "sponsor_column": {"type": "column", "description": "Sponsor/funder name column (optional — enables diversity scoring)"},
+    "submission_date_column": {"type": "column", "description": "Proposal submission date column (optional — enables sponsor timing analysis)"},
+    "lookback_months": {"type": "integer", "default": 24, "min": 1, "description": "Months of history to consider for trend analysis"}
+  },
+  "input_requirements": {"min_rows": 1, "max_rows": 100000, "required_column_types": []},
+  "output_schema": {
+    "preserves_input_columns": false,
+    "added_columns": [],
+    "extra_tables": ["pi_health", "portfolio_summary", "sponsor_timing"]
+  },
+  "cost_estimate": {"typical_duration_seconds": 10, "typical_cost_usd": 0.0005},
+  "tags": ["grants", "research-administration", "portfolio", "nce", "funding-gap", "research", "higher-ed"]
+}

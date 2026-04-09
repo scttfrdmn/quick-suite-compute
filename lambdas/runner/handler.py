@@ -181,15 +181,21 @@ def handler(event: dict, context) -> dict:
         logger.error(f"Profile execution failed: {exc}")
         raise RuntimeError(f"Analysis failed: {exc}") from exc
 
+    # Coerce plain-dict result (handlers that return {key: val} rather than DataFrame)
+    if isinstance(result_df, dict):
+        diagnostics = result_df
+        result_df = pd.DataFrame()
+
     elapsed = time.monotonic() - start_time
 
     # Write results
+    row_count = diagnostics.get("row_count", len(result_df))
     metadata = {
         "execution_id": execution_id,
         "profile_id": profile["profile_id"],
         "elapsed_seconds": elapsed,
-        "row_count": len(result_df),
-        "columns": list(result_df.columns),
+        "row_count": row_count,
+        "columns": diagnostics.get("columns", list(result_df.columns)),
         "diagnostics": diagnostics,
     }
 
@@ -202,7 +208,7 @@ def handler(event: dict, context) -> dict:
     logger.info(json.dumps({
         "execution_id": execution_id,
         "profile_id": profile["profile_id"],
-        "row_count": len(result_df),
+        "row_count": row_count,
         "elapsed_seconds": elapsed,
         "actual_cost_usd": actual_cost_usd,
     }))
@@ -211,8 +217,8 @@ def handler(event: dict, context) -> dict:
         "execution_id": execution_id,
         "result_s3_uri": data_uri,
         "metadata_s3_uri": meta_uri,
-        "row_count": len(result_df),
-        "columns": list(result_df.columns),
+        "row_count": row_count,
+        "columns": diagnostics.get("columns", list(result_df.columns)),
         "actual_cost_usd": actual_cost_usd,
         "duration_seconds": elapsed,
     }
