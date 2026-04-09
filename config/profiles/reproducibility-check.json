@@ -1,0 +1,19 @@
+{
+  "profile_id": "reproducibility-check",
+  "display_name": "Reproducibility Pre-flight Check",
+  "description": "Re-execute analysis script against deposited data and compare outputs to reported manuscript results.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "research.reproducibility_check_handler",
+  "parameters": {
+    "manuscript_results": {"type": "string", "required": true},
+    "analysis_script_uri": {"type": "string", "required": true},
+    "result_uri": {"type": "string", "required": false},
+    "provenance_run_id": {"type": "string", "required": false},
+    "tolerance": {"type": "float", "default": 0.0001, "min": 0.0, "max": 1.0}
+  },
+  "input_requirements": {"min_rows": 0, "max_rows": 500000},
+  "output_schema": {"preserves_input_columns": false, "added_columns": []},
+  "cost_estimate": {"typical_duration_seconds": 45, "typical_cost_usd": 0.003},
+  "tags": ["reproducibility", "verification", "manuscript", "research"]
+}

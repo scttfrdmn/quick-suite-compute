@@ -1,18 +1,24 @@
 """
 research.py — Research analytics profiles
 
-grant_portfolio_handler  — Grant burn rate, NCE risk, PI productivity (grant-portfolio)
-coauthor_network_handler — Co-authorship network centrality and community detection (network-coauthor)
-grant_pipeline_handler   — PI-level portfolio health and NCE risk projection (grant-pipeline)
-provenance_graph_handler — W3C PROV-DM lineage reconstruction from HistoryTable (provenance-graph)
+grant_portfolio_handler      — Grant burn rate, NCE risk, PI productivity (grant-portfolio)
+coauthor_network_handler     — Co-authorship network centrality and community detection (network-coauthor)
+grant_pipeline_handler       — PI-level portfolio health and NCE risk projection (grant-pipeline)
+provenance_graph_handler     — W3C PROV-DM lineage reconstruction from HistoryTable (provenance-graph)
+power_analysis_handler       — Literature-informed sample size calculation with power curves (#69)
+anomaly_hypothesis_handler   — Anomaly detection + literature cross-reference classification (#70)
+reproducibility_check_handler — Re-execute analysis script and compare to manuscript results (#71)
 
 Called by runner/handler.py via entrypoints in config/profiles/*.json.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import os
+import urllib.request
 from typing import Any
 
 import numpy as np
@@ -505,4 +511,493 @@ def provenance_graph_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> di
         "lineage_markdown": lineage_md,
         "gaps": gaps,
         "activities_found": len(activities),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Router API helper
+# ---------------------------------------------------------------------------
+
+def _call_router_api(tool: str, payload: dict) -> dict | None:
+    """POST to Router API Gateway. Returns parsed JSON or None on failure."""
+    url = os.environ.get("ROUTER_API_URL", "")
+    if not url:
+        return None
+    try:
+        body = json.dumps({"tool": tool, **payload}).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.warning("Router API call failed: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# power-analysis (#69)
+# ---------------------------------------------------------------------------
+
+def power_analysis_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> dict[str, Any]:
+    """
+    Literature-informed sample size calculation with power curves.
+
+    Three modes via effect_size_source:
+      - "literature": extract effect sizes from comparable PubMed studies via Router
+      - "pilot_data": compute Cohen's d from df grouped by first treatment_var
+      - "manual": use manual_effect_size directly
+    """
+    from scipy.stats import norm
+
+    outcome_var = parameters.get("outcome_var", "")
+    treatment_vars: list[str] = parameters.get("treatment_vars") or []
+    alpha = float(parameters.get("alpha", 0.05))
+    target_power = float(parameters.get("target_power", 0.80))
+    effect_size_source = str(parameters.get("effect_size_source", "manual"))
+    comparable_studies: list[str] = parameters.get("comparable_studies") or []
+    assay_context = parameters.get("assay_context", "")
+    manual_effect_size = parameters.get("manual_effect_size")
+
+    if not outcome_var:
+        return {"error": "outcome_var is required", "statusCode": 400}
+    if not treatment_vars:
+        return {"error": "treatment_vars is required (at least one column)", "statusCode": 400}
+
+    d: float | None = None
+    effect_size_distribution: list[float] = []
+    citations: list[str] = []
+    confound_checklist: list[str] = []
+
+    if effect_size_source == "literature":
+        # Call Router extract for each comparable study
+        for pmid in comparable_studies:
+            resp = _call_router_api("extract", {
+                "extraction_type": "effect_sizes",
+                "text": pmid,
+                "assay_context": assay_context,
+            })
+            if resp and "effect_sizes" in resp:
+                effect_size_distribution.extend(resp["effect_sizes"])
+                citations.append(pmid)
+            if resp and "confounds" in resp:
+                confound_checklist.extend(resp["confounds"])
+
+        if effect_size_distribution:
+            # 25th percentile as conservative estimate
+            effect_size_distribution_sorted = sorted(effect_size_distribution)
+            idx = max(0, int(len(effect_size_distribution_sorted) * 0.25) - 1)
+            d = float(effect_size_distribution_sorted[idx])
+        elif manual_effect_size is not None:
+            d = float(manual_effect_size)
+        else:
+            return {
+                "error": "Router unavailable and no manual_effect_size provided",
+                "statusCode": 400,
+            }
+
+    elif effect_size_source == "pilot_data":
+        if df.empty:
+            return {"error": "pilot_data mode requires a non-empty DataFrame", "statusCode": 400}
+        treatment_col = treatment_vars[0]
+        if treatment_col not in df.columns:
+            return {"error": f"treatment column '{treatment_col}' not found", "statusCode": 400}
+        if outcome_var not in df.columns:
+            return {"error": f"outcome column '{outcome_var}' not found", "statusCode": 400}
+
+        groups = df.groupby(treatment_col)[outcome_var].apply(list)
+        if len(groups) < 2:
+            return {"error": "pilot_data mode requires at least 2 groups", "statusCode": 400}
+
+        group_values = list(groups.values)
+        g1 = np.array(group_values[0], dtype=float)
+        g2 = np.array(group_values[1], dtype=float)
+        g1 = g1[~np.isnan(g1)]
+        g2 = g2[~np.isnan(g2)]
+
+        if len(g1) < 2 or len(g2) < 2:
+            return {"error": "Each group needs at least 2 non-NaN observations", "statusCode": 400}
+
+        pooled_std = float(np.sqrt(
+            ((len(g1) - 1) * np.var(g1, ddof=1) + (len(g2) - 1) * np.var(g2, ddof=1))
+            / (len(g1) + len(g2) - 2)
+        ))
+        if pooled_std < 1e-12:
+            return {"error": "Pooled standard deviation is near zero", "statusCode": 400}
+        d = abs(float(np.mean(g1)) - float(np.mean(g2))) / pooled_std
+
+    elif effect_size_source == "manual":
+        if manual_effect_size is None:
+            return {"error": "manual_effect_size is required when effect_size_source='manual'", "statusCode": 400}
+        d = float(manual_effect_size)
+
+    else:
+        return {"error": f"Unknown effect_size_source: {effect_size_source}", "statusCode": 400}
+
+    if d is None or d <= 0:
+        return {"error": "Computed effect size must be > 0", "statusCode": 400}
+
+    # Compute required n per group using scipy approximation
+    z_alpha = float(norm.ppf(1 - alpha / 2))
+    z_beta = float(norm.ppf(target_power))
+    required_n = int(math.ceil(2 * ((z_alpha + z_beta) / d) ** 2))
+
+    # Try statsmodels for more precise answer
+    try:
+        from statsmodels.stats.power import TTestIndPower
+        required_n = int(math.ceil(
+            TTestIndPower().solve_power(
+                effect_size=d, alpha=alpha, power=target_power, alternative="two-sided",
+            )
+        ))
+    except ImportError:
+        pass  # scipy approximation already computed
+
+    # Power curve
+    power_curve: list[dict] = []
+    for n in range(2, 101):
+        try:
+            from statsmodels.stats.power import TTestIndPower
+            p = float(TTestIndPower().solve_power(
+                effect_size=d, alpha=alpha, nobs1=n, alternative="two-sided",
+            ))
+        except (ImportError, Exception):
+            # Scipy approximation
+            se = d / math.sqrt(2 / n) if n > 0 else 0
+            p = float(1 - norm.cdf(z_alpha - se))
+        power_curve.append({"n": n, "power": round(p, 6)})
+
+    return {
+        "profile_id": "power-analysis",
+        "required_n_per_group": required_n,
+        "power_curve": power_curve,
+        "effect_size_used": round(d, 6),
+        "effect_size_source": effect_size_source,
+        "effect_size_distribution": effect_size_distribution,
+        "citations": citations,
+        "confound_checklist": confound_checklist,
+    }
+
+
+# ---------------------------------------------------------------------------
+# anomaly-hypothesis (#70)
+# ---------------------------------------------------------------------------
+
+_DOMAIN_THRESHOLDS = {
+    "genomics": 3.5,
+    "proteomics": 3.0,
+    "behavioral": 2.5,
+    "geospatial": 3.0,
+}
+
+
+def anomaly_hypothesis_handler(
+    df: pd.DataFrame, parameters: dict[str, Any]
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Detect anomalies and classify each with literature cross-reference.
+
+    Classifications: instrument_error, known_noise, reported_effect, novel_candidate.
+    """
+    from sklearn.ensemble import IsolationForest
+    from sklearn.preprocessing import StandardScaler
+
+    feature_cols: list[str] = parameters.get("features") or []
+    domain = str(parameters.get("domain", "genomics"))
+    contamination = float(parameters.get("contamination", 0.05))
+
+    if not feature_cols:
+        return df.copy(), {"error": "features parameter is required (list of columns)"}
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        return df.copy(), {"error": f"Feature columns not found: {missing}"}
+    if len(df) < 50:
+        return df.copy(), {"error": "anomaly-hypothesis requires at least 50 rows"}
+
+    z_threshold = _DOMAIN_THRESHOLDS.get(domain, 3.0)
+
+    X = df[feature_cols].copy()
+    nan_mask = X.isna().any(axis=1)
+    X_clean = X[~nan_mask]
+
+    if len(X_clean) < 10:
+        return df.copy(), {"error": "Too few complete rows for anomaly detection"}
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_clean)
+
+    clf = IsolationForest(contamination=contamination, random_state=42, n_estimators=100)
+    clf.fit(X_scaled)
+    scores = clf.score_samples(X_scaled)
+
+    # Convert anomaly scores to z-scores
+    score_mean = float(np.mean(scores))
+    score_std = float(np.std(scores))
+    if score_std < 1e-12:
+        score_std = 1.0
+    z_scores = (scores - score_mean) / score_std
+
+    # Anomalies are those with z-score below -threshold (more negative = more anomalous)
+    anomaly_mask = z_scores < -z_threshold
+
+    result = df.copy()
+    result["is_anomaly"] = False
+    result["anomaly_score"] = np.nan
+    result["anomaly_class"] = ""
+    result["confidence"] = np.nan
+    result["supporting_citations"] = ""
+    result["note"] = ""
+
+    clean_indices = df.index[~nan_mask]
+    result.loc[clean_indices, "anomaly_score"] = scores
+
+    anomaly_indices = clean_indices[anomaly_mask]
+    result.loc[anomaly_indices, "is_anomaly"] = True
+
+    classification_counts: dict[str, int] = {
+        "instrument_error": 0,
+        "known_noise": 0,
+        "reported_effect": 0,
+        "novel_candidate": 0,
+    }
+
+    for idx in anomaly_indices:
+        row = df.loc[idx]
+        context_parts = [f"{col}={row[col]}" for col in feature_cols if pd.notna(row[col])]
+        context = f"Anomalous observation in {domain} domain: " + ", ".join(context_parts)
+
+        resp = _call_router_api("research", {
+            "query": context,
+            "grounding_mode": "strict",
+        })
+
+        anomaly_class = "novel_candidate"
+        confidence = 0.5
+        citations_str = ""
+        note = ""
+
+        if resp:
+            sources = resp.get("sources_used") or []
+            content = str(resp.get("content", "")).lower()
+            citations_str = "; ".join(str(s) for s in sources[:5])
+
+            if any(kw in content for kw in ("instrument", "calibration")):
+                anomaly_class = "instrument_error"
+                confidence = 0.8
+                note = "Literature suggests instrument/calibration artifact"
+            elif any(kw in content for kw in ("noise", "artifact")):
+                anomaly_class = "known_noise"
+                confidence = 0.7
+                note = "Literature suggests known noise pattern"
+            elif sources:
+                anomaly_class = "reported_effect"
+                confidence = 0.75
+                note = "Literature contains grounded reports of similar observations"
+            else:
+                anomaly_class = "novel_candidate"
+                confidence = 0.6
+                note = "No matching literature found — potential novel finding"
+        else:
+            note = "Router unavailable — classified as novel candidate by default"
+
+        result.loc[idx, "anomaly_class"] = anomaly_class
+        result.loc[idx, "confidence"] = confidence
+        result.loc[idx, "supporting_citations"] = citations_str
+        result.loc[idx, "note"] = note
+        classification_counts[anomaly_class] += 1
+
+    anomaly_count = int(anomaly_mask.sum())
+    diagnostics = {
+        "feature_columns": feature_cols,
+        "domain": domain,
+        "z_threshold": z_threshold,
+        "contamination": contamination,
+        "anomaly_count": anomaly_count,
+        "classifications": classification_counts,
+    }
+
+    logger.info(
+        "anomaly-hypothesis complete: %d anomalies detected, domain=%s, z_threshold=%.1f",
+        anomaly_count, domain, z_threshold,
+    )
+    return result, diagnostics
+
+
+# ---------------------------------------------------------------------------
+# reproducibility-check (#71)
+# ---------------------------------------------------------------------------
+
+def reproducibility_check_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> dict[str, Any]:
+    """
+    Re-execute analysis script against deposited data and compare outputs
+    to reported manuscript results.
+    """
+    import io
+
+    import boto3
+
+    manuscript_results_raw = parameters.get("manuscript_results")
+    analysis_script_uri = str(parameters.get("analysis_script_uri", "")).strip()
+    result_uri = str(parameters.get("result_uri", "")).strip()
+    provenance_run_id = parameters.get("provenance_run_id")
+    tolerance = float(parameters.get("tolerance", 1e-4))
+
+    if not manuscript_results_raw:
+        return {"error": "manuscript_results is required", "statusCode": 400}
+    if not analysis_script_uri:
+        return {"error": "analysis_script_uri is required", "statusCode": 400}
+
+    # Parse manuscript_results — accept JSON string or list of dicts
+    if isinstance(manuscript_results_raw, str):
+        try:
+            manuscript_results = json.loads(manuscript_results_raw)
+        except json.JSONDecodeError:
+            return {"error": "manuscript_results must be valid JSON", "statusCode": 400}
+    elif isinstance(manuscript_results_raw, list):
+        manuscript_results = manuscript_results_raw
+    else:
+        return {"error": "manuscript_results must be a JSON string or list", "statusCode": 400}
+
+    if not isinstance(manuscript_results, list):
+        return {"error": "manuscript_results must be a JSON list of dicts", "statusCode": 400}
+
+    # Parse S3 URIs
+    def _parse_s3(uri: str) -> tuple[str, str]:
+        if not uri.startswith("s3://"):
+            raise ValueError(f"Expected s3:// URI, got: {uri}")
+        parts = uri[5:].split("/", 1)
+        if len(parts) != 2 or not parts[1]:
+            raise ValueError(f"Invalid S3 URI: {uri}")
+        return parts[0], parts[1]
+
+    s3 = boto3.client("s3")
+
+    # Provenance lookup for script version
+    script_version = None
+    if provenance_run_id:
+        history_table_name = os.environ.get("COMPUTE_HISTORY_TABLE", "")
+        if history_table_name:
+            try:
+                dynamodb = boto3.resource("dynamodb")
+                table = dynamodb.Table(history_table_name)
+                resp = table.get_item(Key={"job_id": provenance_run_id})
+                item = resp.get("Item", {})
+                script_version = item.get("script_version") or item.get("profile_id")
+            except Exception as exc:
+                logger.warning("Provenance lookup failed: %s", exc)
+
+    # Download analysis script
+    try:
+        script_bucket, script_key = _parse_s3(analysis_script_uri)
+        script_body = s3.get_object(Bucket=script_bucket, Key=script_key)["Body"].read()
+        script_text = script_body.decode("utf-8")
+    except Exception as exc:
+        return {"error": f"Could not download script: {exc}", "statusCode": 400}
+
+    # Load data — use result_uri if provided, otherwise use input df
+    data_df = df
+    if result_uri:
+        try:
+            data_bucket, data_key = _parse_s3(result_uri)
+            data_body = s3.get_object(Bucket=data_bucket, Key=data_key)["Body"].read()
+            if data_key.endswith(".json") or data_key.endswith(".jsonl"):
+                data_df = pd.read_json(io.BytesIO(data_body))
+            else:
+                data_df = pd.read_csv(io.BytesIO(data_body))
+        except Exception as exc:
+            return {"error": f"Could not load data from result_uri: {exc}", "statusCode": 400}
+
+    # Execute script in RestrictedPython sandbox
+    try:
+        from RestrictedPython import compile_restricted
+    except ImportError:
+        return {
+            "error": "Reproducibility check requires RestrictedPython",
+            "statusCode": 503,
+        }
+
+    try:
+        # Import sandbox builder from custom.py
+        from custom import _build_safe_globals
+
+        byte_code = compile_restricted(script_text, filename=analysis_script_uri, mode="exec")
+        safe_ns = _build_safe_globals()
+        safe_ns["__name__"] = "__restricted__"
+        exec(byte_code, safe_ns)  # noqa: S102
+
+        transform_fn = safe_ns.get("transform")
+        if transform_fn is None or not callable(transform_fn):
+            return {"error": "Script must define a callable named 'transform(df)'", "statusCode": 400}
+
+        computed = transform_fn(data_df)
+    except Exception as exc:
+        return {"error": f"Script execution failed: {exc}", "statusCode": 500}
+
+    # Compare manuscript_results to computed outputs
+    matches: list[dict] = []
+    discrepancies: list[dict] = []
+
+    for entry in manuscript_results:
+        metric_name = entry.get("metric", entry.get("name", "unknown"))
+        reported = entry.get("value")
+        if reported is None:
+            discrepancies.append({
+                "metric": metric_name,
+                "error": "No 'value' field in manuscript entry",
+            })
+            continue
+
+        # Try to find computed value: check dict results, DataFrame columns, or attributes
+        computed_value = None
+        if isinstance(computed, dict):
+            computed_value = computed.get(metric_name)
+        elif isinstance(computed, pd.DataFrame) and metric_name in computed.columns:
+            # Use the first value or mean
+            computed_value = float(computed[metric_name].mean())
+
+        if computed_value is None:
+            discrepancies.append({
+                "metric": metric_name,
+                "reported": reported,
+                "computed": None,
+                "error": f"Metric '{metric_name}' not found in computed output",
+            })
+            continue
+
+        try:
+            reported_f = float(reported)
+            computed_f = float(computed_value)
+            delta = abs(reported_f - computed_f)
+            if delta <= tolerance:
+                matches.append({
+                    "metric": metric_name,
+                    "reported": reported_f,
+                    "computed": computed_f,
+                    "delta": round(delta, 10),
+                })
+            else:
+                discrepancies.append({
+                    "metric": metric_name,
+                    "reported": reported_f,
+                    "computed": computed_f,
+                    "delta": round(delta, 10),
+                })
+        except (ValueError, TypeError):
+            # String comparison
+            if str(reported) == str(computed_value):
+                matches.append({"metric": metric_name, "reported": reported, "computed": computed_value})
+            else:
+                discrepancies.append({
+                    "metric": metric_name,
+                    "reported": reported,
+                    "computed": computed_value,
+                })
+
+    return {
+        "profile_id": "reproducibility-check",
+        "matches": matches,
+        "discrepancies": discrepancies,
+        "script_version": script_version,
+        "total_checks": len(manuscript_results),
     }

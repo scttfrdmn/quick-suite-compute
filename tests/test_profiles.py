@@ -61,6 +61,10 @@ EXPECTED_PROFILE_IDS = {
     "causal-did",
     "grant-pipeline",
     "provenance-graph",
+    # v0.17.0 profiles
+    "power-analysis",
+    "anomaly-hypothesis",
+    "reproducibility-check",
 }
 
 

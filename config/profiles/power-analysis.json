@@ -1,0 +1,22 @@
+{
+  "profile_id": "power-analysis",
+  "display_name": "Statistical Power Analysis",
+  "description": "Literature-informed sample size calculation with power curves and confound checklists.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "research.power_analysis_handler",
+  "parameters": {
+    "outcome_var": {"type": "column", "required": true},
+    "treatment_vars": {"type": "column_list", "min_columns": 1},
+    "alpha": {"type": "float", "default": 0.05, "min": 0.001, "max": 0.20},
+    "target_power": {"type": "float", "default": 0.80, "min": 0.50, "max": 0.99},
+    "effect_size_source": {"type": "string", "default": "manual", "enum": ["literature", "pilot_data", "manual"]},
+    "comparable_studies": {"type": "string_list", "required": false},
+    "assay_context": {"type": "string", "required": false},
+    "manual_effect_size": {"type": "float", "required": false, "min": 0.01, "max": 5.0}
+  },
+  "input_requirements": {"min_rows": 0, "max_rows": 500000},
+  "output_schema": {"preserves_input_columns": false, "added_columns": []},
+  "cost_estimate": {"typical_duration_seconds": 30, "typical_cost_usd": 0.002},
+  "tags": ["power", "sample-size", "experimental-design", "literature", "research"]
+}

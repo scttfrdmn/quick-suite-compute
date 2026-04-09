@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-04-09
+
+### Added
+- `power-analysis` profile: Literature-informed sample size calculation; three effect size modes (`literature` via Router extract API, `pilot_data` Cohen's d, `manual`); scipy/statsmodels power computation; power curves for n=2..100; 25th-percentile conservative estimate from literature; confound checklist from Router extraction (#69)
+- `anomaly-hypothesis` profile: IsolationForest anomaly detection with domain-specific z-thresholds (genomics 3.5, proteomics 3.0, behavioral 2.5, geospatial 3.0); per-anomaly literature cross-reference via Router research API with grounding; four classification types: `instrument_error`, `known_noise`, `reported_effect`, `novel_candidate`; Router failures non-blocking (default to `novel_candidate`) (#70)
+- `reproducibility-check` profile: Re-executes analysis script from S3 in RestrictedPython sandbox against deposited data; compares computed outputs to `manuscript_results` entries within configurable `tolerance`; provenance lookup via HistoryTable when `provenance_run_id` provided; graceful 503 if RestrictedPython unavailable (#71)
+- `_call_router_api()` helper in `research.py`: shared HTTP POST helper for Router API Gateway calls; reads `ROUTER_API_URL` env var; 30-second timeout; returns `None` on any failure (non-blocking)
+- CDK: `ROUTER_API_URL` env var added to `common_env` via `router_api_url` CDK context
+- 3 new profile JSONs: `config/profiles/power-analysis.json`, `config/profiles/anomaly-hypothesis.json`, `config/profiles/reproducibility-check.json`
+- 18 new tests in `tests/test_research_science.py` (TestPowerAnalysis: 6, TestAnomalyHypothesis: 6, TestReproducibilityCheck: 6)
+
 ## [0.16.0] - 2026-04-07
 
 ### Added

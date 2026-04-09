@@ -418,6 +418,9 @@ class ComputeStack(Stack):
         }
         if router_invoke_arn:
             common_env["ROUTER_INVOKE_ARN"] = router_invoke_arn
+        router_api_url = self.node.try_get_context("router_api_url") or ""
+        if router_api_url:
+            common_env["ROUTER_API_URL"] = router_api_url
 
         # Upload profiles JSON to S3 — full profile data exceeds Lambda 4KB env-var limit.
         # Tool Lambdas read via PROFILES_S3_URI at first invocation.

@@ -1,0 +1,26 @@
+{
+  "profile_id": "anomaly-hypothesis",
+  "display_name": "Anomaly Hypothesis Classification",
+  "description": "Detect anomalies and classify each with literature cross-reference: instrument error, known noise, reported effect, or novel candidate.",
+  "category": "research",
+  "backend": "lambda",
+  "entrypoint": "research.anomaly_hypothesis_handler",
+  "parameters": {
+    "features": {"type": "column_list", "min_columns": 2},
+    "domain": {"type": "string", "default": "genomics", "enum": ["genomics", "proteomics", "behavioral", "geospatial"]},
+    "contamination": {"type": "float", "default": 0.05, "min": 0.01, "max": 0.20}
+  },
+  "input_requirements": {"min_rows": 50, "max_rows": 500000, "required_column_types": ["numeric"]},
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "is_anomaly", "type": "boolean"},
+      {"name": "anomaly_score", "type": "float"},
+      {"name": "anomaly_class", "type": "string"},
+      {"name": "confidence", "type": "float"},
+      {"name": "supporting_citations", "type": "string"}
+    ]
+  },
+  "cost_estimate": {"typical_duration_seconds": 60, "typical_cost_usd": 0.005},
+  "tags": ["anomaly", "hypothesis", "literature", "research", "classification"]
+}
