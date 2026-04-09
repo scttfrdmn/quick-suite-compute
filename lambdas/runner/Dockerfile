@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir \
     pypdf==5.1.0 \
     RestrictedPython==7.3 \
     girth==0.8.0 \
-    linearmodels==6.1
+    linearmodels==6.1 \
+    openpyxl==3.1.5
 
 # Copy runner handler and profile modules (build context is lambdas/)
 COPY runner/handler.py ${LAMBDA_TASK_ROOT}/

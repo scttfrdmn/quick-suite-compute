@@ -115,6 +115,11 @@ def handler(event: dict, context) -> dict:
             result["result_dataset_id"] = deliver.get("dataset_id")
             result["result_dataset_name"] = deliver.get("result_dataset_name")
 
+            # Issue #59: export URLs
+            export_urls = deliver.get("export_urls")
+            if export_urls:
+                result["export_urls"] = export_urls
+
             # Issue 21: surface chain step info if present
             chain_step = output.get("chain_step")
             if chain_step:

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-04-09
+
+### Added
+- Results write-back to data source registry: `record-spend` Lambda writes completed job results to `qs-data-source-registry` DynamoDB table when `DATA_REGISTRY_TABLE` env var is set (CDK context `data_registry_table_name` / `data_registry_table_arn`); fail-open on errors (#58)
+- CSV/Excel export: `deliver` Lambda generates `.csv` and `.xlsx` copies of Parquet results; presigned download URLs (24h TTL) returned in `export_urls` dict; `compute_status` SUCCEEDED response surfaces `export_urls` when present; `openpyxl` added to runner Docker image; fail-open on export errors (#59)
+- `financial-aid-effectiveness` profile: model financial aid packaging effectiveness on persistence/graduation; logistic regression (IRLS), aid-band cohort tables, predicted persistence probabilities, unmet-need trends; `config/profiles/financial-aid-effectiveness.json` (#60)
+- 15 new tests in `tests/test_v18_output.py` (TestRegistryWriteBack: 4, TestCSVExcelExport: 5, TestFinancialAidEffectiveness: 6)
+
 ## [0.17.0] - 2026-04-09
 
 ### Added

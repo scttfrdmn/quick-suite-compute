@@ -65,6 +65,8 @@ EXPECTED_PROFILE_IDS = {
     "power-analysis",
     "anomaly-hypothesis",
     "reproducibility-check",
+    # v0.18.0 profiles
+    "financial-aid-effectiveness",
 }
 
 

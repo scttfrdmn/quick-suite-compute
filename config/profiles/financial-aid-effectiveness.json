@@ -1,0 +1,37 @@
+{
+  "profile_id": "financial-aid-effectiveness",
+  "display_name": "Financial Aid Effectiveness Analysis",
+  "description": "Model financial aid packaging effectiveness on student persistence and graduation outcomes. Produces aid-band cohort tables, predicted persistence probabilities via logistic regression, and unmet-need trends.",
+  "category": "higher-ed",
+  "backend": "lambda",
+  "entrypoint": "higher_ed.financial_aid_effectiveness_handler",
+  "parameters": {
+    "student_id_col": {"type": "column", "required": true},
+    "aid_year_col": {"type": "column", "required": true},
+    "efc_col": {"type": "column", "required": true},
+    "total_grants_col": {"type": "column", "required": true},
+    "total_loans_col": {"type": "column", "required": true},
+    "persistence_col": {"type": "column", "required": true},
+    "gpa_col": {"type": "column", "required": false},
+    "degree_col": {"type": "column", "required": false}
+  },
+  "input_requirements": {
+    "min_rows": 20,
+    "max_rows": 500000,
+    "required_column_types": ["numeric"]
+  },
+  "output_schema": {
+    "preserves_input_columns": true,
+    "added_columns": [
+      {"name": "net_price", "type": "float"},
+      {"name": "aid_band", "type": "string"},
+      {"name": "predicted_persistence_prob", "type": "float"},
+      {"name": "unmet_need", "type": "float"}
+    ]
+  },
+  "cost_estimate": {
+    "typical_duration_seconds": 15,
+    "typical_cost_usd": 0.001
+  },
+  "tags": ["financial-aid", "persistence", "graduation", "higher-ed", "equity", "net-price"]
+}

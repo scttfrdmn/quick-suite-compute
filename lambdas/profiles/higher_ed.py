@@ -524,3 +524,119 @@ def assessment_irt_handler(df, params):
         "item_information": item_information,
         "profile_id": "assessment-irt",
     }
+
+
+# ---------------------------------------------------------------------------
+# financial-aid-effectiveness
+# ---------------------------------------------------------------------------
+
+def financial_aid_effectiveness_handler(
+    df: pd.DataFrame, parameters: dict[str, Any]
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Model financial aid packaging effectiveness on persistence/graduation.
+
+    Required columns (via parameters):
+      student_id_col, aid_year_col, efc_col, total_grants_col,
+      total_loans_col, persistence_col
+    Optional: gpa_col, degree_col
+
+    Returns DataFrame with aid_band and predicted_persistence_prob columns,
+    plus diagnostics with cohort_table, regression coefficients, unmet_need_trend.
+    """
+    # Column mapping
+    student_id = parameters.get("student_id_col", "student_id")
+    aid_year = parameters.get("aid_year_col", "aid_year")
+    efc = parameters.get("efc_col", "efc")
+    grants = parameters.get("total_grants_col", "total_grants")
+    loans = parameters.get("total_loans_col", "total_loans")
+    persist = parameters.get("persistence_col", "persistence_flag")
+    gpa_col = parameters.get("gpa_col")
+
+    # Validate required columns
+    required = [student_id, aid_year, efc, grants, loans, persist]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        return df, {"error": f"Missing required columns: {missing}"}
+
+    # Compute net price and aid band
+    df = df.copy()
+    df["net_price"] = df[efc] - df[grants]
+
+    def _band(net):
+        if net < 5000:
+            return "<$5k"
+        elif net < 10000:
+            return "$5-10k"
+        elif net < 15000:
+            return "$10-15k"
+        else:
+            return ">$15k"
+
+    df["aid_band"] = df["net_price"].apply(_band)
+
+    # Cohort table by aid band
+    cohort_rows = []
+    for band, group in df.groupby("aid_band"):
+        row = {
+            "aid_band": band,
+            "count": len(group),
+            "persistence_rate": round(group[persist].mean(), 4),
+            "mean_net_price": round(group["net_price"].mean(), 2),
+        }
+        if gpa_col and gpa_col in df.columns:
+            row["mean_gpa"] = round(group[gpa_col].mean(), 4)
+        cohort_rows.append(row)
+
+    # Logistic regression: persistence ~ net_price + grants + loans
+    try:
+        y = df[persist].astype(float).values
+        X_cols = ["net_price", grants, loans]
+        X = df[X_cols].astype(float).values
+        X = np.column_stack([np.ones(len(X)), X])  # add intercept
+
+        # Iteratively reweighted least squares (simple logistic)
+        beta = np.zeros(X.shape[1])
+        for _ in range(25):
+            p = 1.0 / (1.0 + np.exp(-X @ beta))
+            p = np.clip(p, 1e-10, 1 - 1e-10)
+            W = np.diag(p * (1 - p))
+            try:
+                beta = beta + np.linalg.solve(X.T @ W @ X, X.T @ (y - p))
+            except np.linalg.LinAlgError:
+                break
+
+        # Predicted probabilities
+        df["predicted_persistence_prob"] = 1.0 / (1.0 + np.exp(-X @ beta))
+        df["predicted_persistence_prob"] = df["predicted_persistence_prob"].round(4)
+
+        coef_names = ["intercept", "net_price", grants, loans]
+        regression_summary = [
+            {"variable": name, "coefficient": round(float(b), 6)}
+            for name, b in zip(coef_names, beta)
+        ]
+    except Exception as exc:
+        logger.warning("Logistic regression failed: %s", exc)
+        df["predicted_persistence_prob"] = None
+        regression_summary = [{"error": str(exc)}]
+
+    # Unmet-need trend by aid year
+    df["unmet_need"] = df[efc] - df[grants] - df[loans]
+    unmet_trend = []
+    for year, group in df.groupby(aid_year):
+        unmet_trend.append({
+            "aid_year": str(year),
+            "mean_unmet_need": round(float(group["unmet_need"].mean()), 2),
+            "student_count": len(group),
+        })
+    unmet_trend.sort(key=lambda r: r["aid_year"])
+
+    diagnostics = {
+        "cohort_table": cohort_rows,
+        "regression_summary": regression_summary,
+        "unmet_need_trend": unmet_trend,
+        "total_students": len(df),
+        "persistence_rate_overall": round(float(df[persist].mean()), 4),
+    }
+
+    return df, diagnostics

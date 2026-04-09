@@ -553,6 +553,15 @@ class ComputeStack(Stack):
         # -----------------------------------------------------------------
         # Lambda: Record Spend (Step Functions step)
         # -----------------------------------------------------------------
+        # v0.18.0 #58: data source registry write-back
+        data_registry_table_name = self.node.try_get_context("data_registry_table_name") or ""
+        data_registry_table_arn = self.node.try_get_context("data_registry_table_arn") or ""
+
+        record_spend_env = {
+            **common_env,
+            "DATA_REGISTRY_TABLE": data_registry_table_name,
+        }
+
         record_spend_fn = lambda_.Function(
             self,
             "RecordSpend",
@@ -562,7 +571,7 @@ class ComputeStack(Stack):
             code=lambda_.Code.from_asset("lambdas/record-spend"),
             timeout=Duration.seconds(10),
             memory_size=128,
-            environment=common_env,
+            environment=record_spend_env,
             log_retention=logs.RetentionDays.THREE_MONTHS,
             **_vpc_kwargs,
         )
@@ -575,6 +584,11 @@ class ComputeStack(Stack):
                 resources=["*"],
             )
         )
+        if data_registry_table_arn:
+            record_spend_fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["dynamodb:PutItem"],
+                resources=[data_registry_table_arn],
+            ))
 
         # -----------------------------------------------------------------
         # Lambda: Handle Failure (Step Functions catch)

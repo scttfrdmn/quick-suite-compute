@@ -179,4 +179,25 @@ def handler(event: dict, context) -> dict:
         except Exception as exc:
             logger.warning(f"Failed to write snapshot: {exc}")
 
+    # Write to data source registry (v0.18.0 #58) — fail-open
+    registry_table = os.environ.get("DATA_REGISTRY_TABLE", "")
+    if registry_table:
+        try:
+            deliver_output = event.get("deliver", {})
+            result_uri = deliver_output.get("result_uri") or deliver_output.get("result_s3_uri", "")
+            now_str = datetime.now(timezone.utc).isoformat()
+            dynamodb.Table(registry_table).put_item(Item={
+                "source_id": f"compute-result-{event.get('execution_id', 'unknown')}",
+                "source_type": "s3",
+                "uri": result_uri,
+                "name": f"{profile_id} results — {now_str}",
+                "created_by": user_arn,
+                "tags": [profile_id, "compute-result"],
+                "data_classification": "internal",
+                "registered_at": now_str,
+            })
+            logger.info(json.dumps({"registry_write": "success", "source_id": f"compute-result-{event.get('execution_id')}"}))
+        except Exception as exc:
+            logger.warning("Registry write-back failed (non-fatal): %s", exc)
+
     return {"recorded": True, "spend_usd": cost, "month": month}

@@ -26,6 +26,7 @@ Output:
   }
 """
 
+import io
 import json
 import logging
 import os
@@ -38,6 +39,12 @@ logger.setLevel(logging.INFO)
 
 quicksight = boto3.client("quicksight")
 s3 = boto3.client("s3")
+
+
+def _parse_s3_uri(uri: str) -> tuple[str, str]:
+    """Parse s3://bucket/key into (bucket, key)."""
+    parts = uri.replace("s3://", "").split("/", 1)
+    return parts[0], parts[1] if len(parts) > 1 else ""
 
 
 def _write_manifest(bucket: str, execution_id: str, result_s3_uri: str) -> str:
@@ -195,7 +202,7 @@ def handler(event: dict, context) -> dict:
             "quicksight_result": qs_result,
         }
 
-    return {
+    result = {
         "status": "delivered",
         "dataset_id": dataset_id,
         "data_source_id": data_source_id,
@@ -204,3 +211,45 @@ def handler(event: dict, context) -> dict:
         "manifest_uri": manifest_uri,
         "quicksight_result": qs_result,
     }
+
+    # CSV/Excel export (v0.18.0 #59) — fail-open
+    if result_s3_uri:
+        try:
+            import pandas as pd
+
+            r_bucket, r_key = _parse_s3_uri(result_s3_uri)
+            obj = s3.get_object(Bucket=r_bucket, Key=r_key)
+            df = pd.read_parquet(io.BytesIO(obj["Body"].read()))
+
+            base_key = r_key.rsplit("/", 1)[0] if "/" in r_key else ""
+            row_limit = 1_000_000
+
+            # CSV
+            csv_key = f"{base_key}/result.csv"
+            csv_buffer = io.BytesIO()
+            df.head(row_limit).to_csv(csv_buffer, index=False)
+            csv_buffer.seek(0)
+            s3.put_object(Bucket=r_bucket, Key=csv_key, Body=csv_buffer.getvalue(),
+                          ContentType="text/csv")
+
+            # Excel
+            xlsx_key = f"{base_key}/result.xlsx"
+            xlsx_buffer = io.BytesIO()
+            df.head(row_limit).to_excel(xlsx_buffer, index=False, engine="openpyxl")
+            xlsx_buffer.seek(0)
+            s3.put_object(Bucket=r_bucket, Key=xlsx_key, Body=xlsx_buffer.getvalue(),
+                          ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            # Generate presigned URLs (24h TTL)
+            export_urls = {}
+            for fmt, k in [("parquet", r_key), ("csv", csv_key), ("xlsx", xlsx_key)]:
+                export_urls[fmt] = s3.generate_presigned_url(
+                    "get_object", Params={"Bucket": r_bucket, "Key": k},
+                    ExpiresIn=86400,
+                )
+            result["export_urls"] = export_urls
+            logger.info(json.dumps({"export": "success", "formats": ["csv", "xlsx"]}))
+        except Exception as exc:
+            logger.warning("CSV/Excel export failed (non-fatal): %s", exc)
+
+    return result
