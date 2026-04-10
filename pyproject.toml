@@ -35,6 +35,8 @@ dev = [
     "pypdf>=5.1",
     "RestrictedPython>=8.0",
     "openpyxl>=3.1",
+    "pip-audit>=2.7",
+    "cfn-lint>=1.0",
 ]
 
 [tool.ruff]
