@@ -1,6 +1,6 @@
 [project]
 name = "quick-suite-compute"
-version = "0.1.0"
+version = "0.18.0"
 description = "Ephemeral analytics compute for Amazon Quick Suite"
 requires-python = ">=3.12"
 dependencies = [

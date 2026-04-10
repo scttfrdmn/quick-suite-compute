@@ -241,7 +241,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EMR Serverless stub for Spark transform profile (returns `requires_emr` when not enabled)
 - CDK stack with Lambda layers for scientific Python (scikit-learn, pandas, statsmodels, prophet, lifelines) and infrastructure wiring
 
-[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.12.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.14.1...v0.16.0
+[0.14.1]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/scttfrdmn/quick-suite-compute/compare/v0.9.0...v0.10.0
