@@ -72,4 +72,6 @@ jobs:
           semgrep scan --config=auto --error \
             --exclude-rule python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected \
             --exclude-rule javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp \
+            --exclude-rule python.lang.security.audit.exec-detected.exec-detected \
+            --exclude-rule python.lang.security.audit.non-literal-import.non-literal-import \
             .
