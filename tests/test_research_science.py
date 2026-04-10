@@ -7,8 +7,6 @@ Tests for v0.17.0 science research profiles:
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import json
 import os
 import sys
@@ -17,7 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -25,7 +22,6 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lambdas" / "profiles"))
 
 import research  # noqa: E402
-
 
 # ===========================================================================
 # TestPowerAnalysis

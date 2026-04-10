@@ -1445,8 +1445,8 @@ class TestCustomGeneratedHandler:
 
 class TestSafePandasProxy:
     def setup_method(self):
-        from custom import _make_safe_pandas
         import pandas as _pd
+        from custom import _make_safe_pandas
         self.safe_pd = _make_safe_pandas(_pd)
 
     def test_read_csv_with_http_url_raises(self):
@@ -1478,7 +1478,6 @@ class TestSafePandasProxy:
 
     def test_non_read_method_allowed(self):
         # concat, merge, etc. are not blocked
-        import pandas as _pd
         df = self.safe_pd.DataFrame({"a": [1, 2]})
         result = self.safe_pd.concat([df, df])
         assert len(result) == 4
@@ -1645,7 +1644,6 @@ class TestIntersectionalityEquity:
 
     def test_adverse_impact_flag(self):
         # di_ratio 0.75 → flag True; di_ratio 0.85 → flag False
-        ref_mean = 4.0
         # Group A: mean = 3.0 → di = 0.75 → flag True
         # Group B: mean = 3.4 → di = 0.85 → flag False
         pell = ["A"] * 30 + ["B"] * 30 + ["ref"] * 30
@@ -1831,7 +1829,6 @@ class TestPeerCohort:
 
     def test_cache_hit_returns_cached(self, monkeypatch):
         from unittest.mock import MagicMock, patch
-        import json
         monkeypatch.setenv("PEER_COHORT_TABLE", "qs-compute-peer-cohort-cache")
         mock_table = MagicMock()
         mock_table.get_item.return_value = {
@@ -1839,7 +1836,6 @@ class TestPeerCohort:
         }
         with patch("boto3.resource") as mock_boto:
             mock_boto.return_value.Table.return_value = mock_table
-            import importlib as _importlib
             if "peer_cohort" in sys.modules:
                 del sys.modules["peer_cohort"]
             path = REPO_ROOT / "lambdas" / "profiles" / "peer_cohort.py"

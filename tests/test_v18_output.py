@@ -11,13 +11,11 @@ import io
 import json
 import os
 import sys
-from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -37,7 +35,6 @@ _status = _load_handler("compute-status", "_v18_compute_status")
 
 # Profile module is on sys.path via conftest
 from higher_ed import financial_aid_effectiveness_handler  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,7 +109,6 @@ class TestRegistryWriteBack:
 
         # Make put_item raise for registry write only on specific calls
         call_count = {"n": 0}
-        original_put = mock_table.put_item
 
         def _side_effect(**kwargs):
             call_count["n"] += 1
@@ -228,7 +224,7 @@ class TestCSVExcelExport:
 
         with patch.object(_deliver, "s3", mock_s3), \
              patch.object(_deliver, "quicksight", mock_qs):
-            result = _deliver.handler(self._make_deliver_event(), None)
+            _deliver.handler(self._make_deliver_event(), None)
 
         csv_puts = [
             c for c in mock_s3.put_object.call_args_list
@@ -250,7 +246,7 @@ class TestCSVExcelExport:
 
         with patch.object(_deliver, "s3", mock_s3), \
              patch.object(_deliver, "quicksight", mock_qs):
-            result = _deliver.handler(self._make_deliver_event(), None)
+            _deliver.handler(self._make_deliver_event(), None)
 
         xlsx_puts = [
             c for c in mock_s3.put_object.call_args_list

@@ -15,7 +15,6 @@ import importlib.util
 import json
 import os
 import sys
-from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -27,8 +26,7 @@ REPO_ROOT = Path(__file__).parent.parent
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from stacks.compute_stack import ComputeStack
-
+from stacks.compute_stack import ComputeStack  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Module loaders
@@ -129,7 +127,7 @@ class TestCancelOwnership:
 # #79 — TestBudgetConditionalWrite
 # ---------------------------------------------------------------------------
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError  # noqa: E402
 
 
 def _make_conditional_check_failed():

@@ -225,9 +225,7 @@ class TestComputeStackSynthesis:
         Instead, verify the stack source directly: the policy statement for results/*
         must only list s3:PutObject.
         """
-        import ast
         stack_src = (REPO_ROOT / "stacks" / "compute_stack.py").read_text()
-        tree = ast.parse(stack_src)
         # Walk all list literals that contain "results/*" as part of a string
         # and verify none of them include "s3:GetObject" alongside "s3:PutObject".
         # Simpler: check that GetObject never appears on the same line as results/*

@@ -311,7 +311,6 @@ def grant_pipeline_handler(df: pd.DataFrame, parameters: dict[str, Any]) -> dict
     amount_col = parameters.get("amount_column", "")
     sponsor_col = parameters.get("sponsor_column", "")
     submission_col = parameters.get("submission_date_column", "")
-    lookback_months = int(parameters.get("lookback_months", 24))
 
     if not pi_col:
         return {"error": "pi_column is required", "statusCode": 400}
