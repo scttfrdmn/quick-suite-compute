@@ -27,4 +27,5 @@ RUN pip install --no-cache-dir \
 COPY runner/handler.py ${LAMBDA_TASK_ROOT}/
 COPY profiles/ ${LAMBDA_TASK_ROOT}/
 
+USER 1000
 CMD ["handler.handler"]

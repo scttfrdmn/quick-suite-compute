@@ -176,8 +176,9 @@ class ComputeStack(Stack):
             bucket_name=f"{prefix}-{account_id}-{region}",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=(
-                s3.BucketEncryption.KMS if enable_kms else s3.BucketEncryption.S3_MANAGED
+                s3.BucketEncryption.KMS if enable_kms else s3.BucketEncryption.KMS_MANAGED
             ),
             encryption_key=bucket_kms_key if enable_kms else None,
             lifecycle_rules=[
@@ -287,6 +288,7 @@ class ComputeStack(Stack):
             "NotificationTopic",
             topic_name=f"{prefix}-notifications",
             display_name="Quick Suite Compute Job Notifications",
+            master_key=kms.Alias.from_alias_name(self, "SnsKey", "alias/aws/sns"),
         )
 
         if notification_email:

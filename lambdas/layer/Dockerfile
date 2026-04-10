@@ -11,4 +11,5 @@ RUN pip install --no-cache-dir \
     pyarrow==17.0.0 \
     --target /asset/python
 
+USER 1000
 CMD ["echo", "Layer build complete"]
