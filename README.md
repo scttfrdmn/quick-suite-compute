@@ -1,6 +1,6 @@
 # Quick Suite Compute
 
-**Run statistical analysis on university data from a Quick Suite conversation — no infrastructure, no code, no waiting for a data engineer.**
+**Run statistical analysis on university data from any AgentCore-connected agent — no infrastructure, no code, no waiting for a data engineer.**
 
 A lot of the questions that matter most to a university can't be answered with a chart.
 "Which students are most likely to not return next semester?" "What does enrollment look
@@ -9,14 +9,14 @@ major gift potential?" "Is there a causal effect of this intervention, or just a
 correlation?" These require statistical models: regression, forecasting, clustering,
 survival analysis, causal inference.
 
-Quick Suite can visualize data. It cannot run a k-means clustering job on 300,000 student
-records, fit a Prophet forecast, compute Kaplan-Meier survival curves, or run a
-difference-in-differences analysis. That's what this extension does. An analyst describes
-what analysis they want in natural language, and the Compute extension matches the request
-to the right pre-built profile, runs the job in the background, and delivers the results
-back as a new Quick Sight dataset — usually in under a minute.
+Most agents can visualize data or generate text. They cannot run a k-means clustering job
+on 300,000 student records, fit a Prophet forecast, compute Kaplan-Meier survival curves,
+or run a difference-in-differences analysis. That's what this extension does. An analyst
+describes what analysis they want in natural language, and the Compute extension matches
+the request to the right pre-built profile, runs the job in the background, and delivers
+the results back as a new Quick Sight dataset — usually in under a minute.
 
-## What Quick Suite Alone Can't Do Here
+## What most agents can't do without this extension
 
 - Execute statistical models (regression, clustering, forecasting, topic modeling, survival analysis, causal inference, IRT psychometrics)
 - Run analysis on data that lives in Quick Sight but hasn't had any computation applied to it
@@ -222,8 +222,8 @@ AgentCore Gateway (Lambda targets)
 ## Deploy
 
 ```bash
-git clone https://github.com/scttfrdmn/quick-suite-compute.git
-cd quick-suite-compute
+git clone https://github.com/scttfrdmn/campus-compute.git
+cd campus-compute
 
 uv sync   # or: pip install -r requirements.txt
 
